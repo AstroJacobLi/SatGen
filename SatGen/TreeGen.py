@@ -9,17 +9,16 @@
 ######################## set up the environment #########################
 
 # ---user modules
-import config as cfg
-import cosmo as co
-import init
-from profiles import Dekel
-import aux
+from .. import config as cfg
+from .. import cosmo as co
+from .. import init
+from .profiles import Dekel
+from .. import aux
 
 # ---python modules
 import numpy as np
 import time
 from multiprocessing import Pool, cpu_count
-import sys
 
 # <<< for clean on-screen prints, use with caution, make sure that
 # the warning is not prevalent or essential for the result
@@ -52,6 +51,8 @@ print(
 
 # ---
 time_start = time.time()
+
+
 # for itree in range(Ntree):
 def loop(itree):
     """

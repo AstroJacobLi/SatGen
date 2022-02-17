@@ -7,7 +7,7 @@
 
 #########################################################################
 
-import config as cfg
+from .. import config as cfg
 
 import numpy as np
 import sys

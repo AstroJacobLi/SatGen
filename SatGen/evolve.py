@@ -6,9 +6,9 @@
 
 #########################################################################
 
-import config as cfg
-import cosmo as co
-import profiles as pr
+from .. import config as cfg
+from .. import cosmo as co
+from .. import profiles as pr
 
 import numpy as np
 from scipy.interpolate import interp1d, interp2d

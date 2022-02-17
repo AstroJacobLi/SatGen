@@ -8,13 +8,11 @@
 import numpy as np
 import sys
 
-import config as cfg
-import cosmo as co
-import galhalo as gh
-import aux as aux
+from .. import config as cfg
+from .. import cosmo as co
+from .. import galhalo as gh
 
-from scipy.stats import lognorm, expon
-from scipy.interpolate import splrep, splev
+from scipy.interpolate import splev, lognorm
 
 #########################################################################
 
