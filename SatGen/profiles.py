@@ -22,8 +22,8 @@
 
 #########################################################################
 
-import config as cfg  # for global variables
-import cosmo as co  # for cosmology related functions
+from .. import config as cfg  # for global variables
+from .. import cosmo as co  # for cosmology related functions
 import warnings
 import sys
 

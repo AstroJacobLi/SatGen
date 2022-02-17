@@ -13,16 +13,16 @@
 ######################## set up the environment #########################
 
 # ---user modules
-import config as cfg
-import cosmo as co
-import init
-from profiles import NFW
-import aux
+from .. import config as cfg
+from .. import cosmo as co
+from .. import init
+from .profiles import NFW
+from .. import aux
 
 # ---python modules
 import numpy as np
 import time
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool
 import sys
 from os import path
 
@@ -53,8 +53,10 @@ print(
 
 # ---
 time_start = time.time()
-# for itree in range(Ntree):
-def loop(itree):
+
+
+def loop(itree):  # for itree in range(Ntree):
+
     """
     Replaces the loop "for itree in range(Ntree):", for parallelization.
     """

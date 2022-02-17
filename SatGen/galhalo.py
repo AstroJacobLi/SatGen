@@ -8,10 +8,10 @@
 
 import numpy as np
 
-import config as cfg
-import aux
-import profiles as pr
-import cosmo as co
+from .. import config as cfg
+from .. import aux
+from .. import profiles as pr
+from .. import cosmo as co
 
 from lmfit import minimize, Parameters
 

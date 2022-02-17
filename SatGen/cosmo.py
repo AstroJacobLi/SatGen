@@ -7,15 +7,13 @@
 
 #########################################################################
 
-import config as cfg
+from .. import config as cfg
 
+import sys
 import numpy as np
 from scipy.integrate import quad
 from scipy.optimize import brentq
-import cosmolopy.distance as cdis
-import cosmolopy.density as cden
-import cosmolopy.constants as cc
-import cosmolopy.perturbation as cper
+from cosmolopy import perturbation as cper
 
 #########################################################################
 
@@ -591,6 +589,7 @@ def sigmaM(M, **cosmo):
 
 
 sigmaM_vec = np.vectorize(sigmaM, doc="Vectorized 'sigmaM'")
+
 
 # peak height
 def nu(M, z=0, **cosmo):

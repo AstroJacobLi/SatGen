@@ -12,7 +12,7 @@ setup(
     author_email="fzjiang@caltech.edu",
     description="A semi-analytical satellite galaxy and dark matter halo generator",
     long_description="A semi-analytical satellite galaxy and dark matter halo generator",
-    install_requires=["numpy", "scipy"],
+    install_requires=["numpy", "scipy", "lmfit", "fast_histogram"],
     packages=find_packages(),
     url="https://github.com/aphearin/SatGen",
 )
