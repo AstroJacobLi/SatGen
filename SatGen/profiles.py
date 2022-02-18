@@ -22,8 +22,8 @@
 
 #########################################################################
 
-from .. import config as cfg  # for global variables
-from .. import cosmo as co  # for cosmology related functions
+from . import config as cfg  # for global variables
+from . import cosmo as co  # for cosmology related functions
 import warnings
 import sys
 
@@ -458,7 +458,6 @@ class NFW(object):
             I = np.array(I)
         else:
             I = quad(self.dIdx_sigma, x, np.inf, args=(beta,))[0]
-        f = self.f(x)
         sigmasqr = -self.Phi0 / x ** (2.0 * beta - 1) * (1.0 + x) ** 2 * I
         return np.sqrt(sigmasqr)
 
@@ -4097,7 +4096,7 @@ def h2(x, a, b):
 
     Return: h(x)
     """
-    t = 1.0 / x[::-1]
+    # t = 1.0 / x[::-1]
     pass
 
 

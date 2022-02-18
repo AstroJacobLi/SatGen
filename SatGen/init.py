@@ -8,9 +8,9 @@
 import numpy as np
 import sys
 
-from .. import config as cfg
-from .. import cosmo as co
-from .. import galhalo as gh
+from . import config as cfg
+from . import cosmo as co
+from . import galhalo as gh
 
 from scipy.interpolate import splev, lognorm
 

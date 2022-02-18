@@ -13,11 +13,11 @@
 ######################## set up the environment #########################
 
 # ---user modules
-from .. import config as cfg
-from .. import cosmo as co
-from .. import init
+from . import config as cfg
+from . import cosmo as co
+from . import init
 from .profiles import NFW
-from .. import aux
+from . import aux
 
 # ---python modules
 import numpy as np
