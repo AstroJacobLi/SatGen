@@ -12,12 +12,13 @@
 # On 2021-05-04, added Benson+21 values of the PCH08 merger tree params
 
 #########################################################################
-
-import cosmo as co
+import os
+from . import cosmo as co
 
 import numpy as np
 from scipy.interpolate import interp1d, RectBivariateSpline, splrep
 
+_THIS_DRNAME = os.path.dirname(os.path.abspath(__file__))
 ########################## user control #################################
 
 # ---cosmology
@@ -200,9 +201,10 @@ gvdb_fp = np.array(
 print(">>> Building interpolation grid for Green+19 M(<r|f_b,c)...")
 print(">>> Building interpolation grid for Green+19 sigma(r|f_b,c)...")
 print(">>> Building interpolation grid for Green+19 d2Phidr2(r|f_b,c)...")
-gvdb_mm = np.load("etc/gvdb_mm.npy")
-gvdb_sm = np.load("etc/gvdb_sm.npy")
-gvdb_pm = np.load("etc/gvdb_pm.npy")
+gvdb_mm = np.load(os.path.join(_THIS_DRNAME, "etc/gvdb_mm.npy"))
+gvdb_sm = np.load(os.path.join(_THIS_DRNAME, "etc/gvdb_sm.npy"))
+gvdb_pm = np.load(os.path.join(_THIS_DRNAME, "etc/gvdb_pm.npy"))
+
 nfb = 100
 nr = 131
 ncs = 30
@@ -246,7 +248,7 @@ print(">>> Building interpolator for Jiang+15 orbit sampler...")
 ncdf_pts = 100
 V_by_V200c_arr = np.linspace(0.0, 2.6, ncdf_pts)
 Vr_by_V_arr = np.linspace(0.0, 1.0, ncdf_pts)
-jiang_cdfs = np.load("etc/jiang_cdfs.npz")
+jiang_cdfs = np.load(os.path.join(_THIS_DRNAME, "etc/jiang_cdfs.npz"))
 V_by_V200c_cdf = jiang_cdfs["V_by_V200c"]
 Vr_by_V_cdf = jiang_cdfs["Vr_by_V"]
 
