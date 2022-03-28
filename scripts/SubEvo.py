@@ -14,12 +14,12 @@
 
 ######################## set up the environment #########################
 
-from . import config as cfg
-from . import cosmo as co
-from . import evolve as ev
-from .profiles import NFW, Green
-from .orbit import orbit
-from . import aux
+from SatGen import config as cfg
+from SatGen import cosmo as co
+from SatGen import evolve as ev
+from SatGen.profiles import NFW, Green
+from SatGen.orbit import orbit
+from SatGen import aux
 
 import numpy as np
 import sys
