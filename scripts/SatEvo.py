@@ -8,12 +8,12 @@
 
 ######################## set up the environment #########################
 
-from . import config as cfg
-import evolve as ev
-from .profiles import Dekel, MN
-from orbit import orbit
-import galhalo as gh
-import aux
+from SatGen import config as cfg
+from SatGen import evolve as ev
+from SatGen.profiles import Dekel, MN
+from SatGen.orbit import orbit
+from SatGen import galhalo as gh
+from SatGen import aux
 
 import numpy as np
 import os
