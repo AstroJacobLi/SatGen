@@ -12,7 +12,8 @@ from . import config as cfg
 from . import cosmo as co
 from . import galhalo as gh
 
-from scipy.interpolate import splev, lognorm
+from scipy.interpolate import splev
+from scipy.stats import lognorm
 
 #########################################################################
 
