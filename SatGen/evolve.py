@@ -303,7 +303,9 @@ def msub(sp, potential, xv, dt, choice="King62", alpha=1.0):
         evolved mass, m [M_sun] (float)
         tidal radius, l_t [kpc] (float)
     """
+    print('Running msub ltidal')
     lt = ltidal(sp, potential, xv, choice)
+    print('finished msub ltidal')
     if lt < sp.rh:
         dm = alpha * (sp.Mh - sp.M(lt)) * dt / pr.tdyn(potential, xv[0], xv[2])
         dm = max(dm, 0.0)  # avoid negative dm
@@ -351,12 +353,23 @@ def ltidal(sp, potential, xv, choice="King62"):
     else:
         sys.exit("Invalid choice of tidal radius type!")
 
+    print(f"rhs: {rhs}")
     fa = Findlt(a, sp, rhs)
     fb = Findlt(b, sp, rhs)
+    print(f"fa: {fa}, fb: {fb}")
+    # Check for NaN values
+    if np.isnan(fa) or np.isnan(fb):
+        print(f"Warning: Found NaN values - fa: {fa}, fb: {fb}")
+        # return np.nan
+    else:
+        print(f"fa: {fa}, fb: {fb}")
+        # return cfg.Rres
+
     if fa * fb > 0.0:
         lt = cfg.Rres
     else:
         lt = brentq(Findlt, a, b, args=(sp, rhs), rtol=1e-5, maxiter=1000)
+    print(f"lt: {lt}")
     return lt
 
 
@@ -403,10 +416,14 @@ def lt_King62_RHS(potential, xv):
         xv: phase-space coordinates [R,phi,z,VR,Vphi,Vz] in units of
             [kpc,radian,kpc,kpc/Gyr,kpc/Gyr,kpc/Gyr] (float array)
     """
+    # Check if any inputs are nan
+    # print(f"xv: {xv}", f"potential: {potential}")
     r = np.sqrt(xv[0] ** 2.0 + xv[2] ** 2.0)
+    print(f"r: {r}")
     Om = Omega(xv)
     M = pr.M(potential, r)
     rho = pr.rho(potential, r)
+    print(f"rho: {rho}, potential: {potential[0].__dict__}")
     dlnMdlnr = cfg.FourPi * r ** 3 * rho / M
     return (M / r ** 3) * (2.0 + Om ** 2.0 * r ** 3 / cfg.G / M - dlnMdlnr)
 

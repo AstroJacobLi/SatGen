@@ -1502,6 +1502,8 @@ class Dekel(object):
         """
         r = np.sqrt(R ** 2.0 + z ** 2.0)
         x = r / self.rs
+        print('Now calculate rho with R = ', R, 'z = ', z)
+        # print('Dekel profile: x = ', x, 'rs = ', self.rs, 'R = ', R, 'z = ', z)
         return self.rho0 / (
             x ** self.alphah * (1.0 + x ** 0.5) ** (2.0 * (3.5 - self.alphah))
         )
