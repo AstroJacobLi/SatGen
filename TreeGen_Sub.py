@@ -9,10 +9,12 @@
 # Arthur Fangzhou Jiang 2016 Hebrew University
 # Arthur Fangzhou Jiang 2019 Hebrew University
 # Sheridan Beckwith Green 2020 Yale University
+# Jiaxuan Li: this is the script used for ELVES-Dwarf project, paper 2 (Rvir is Rvir, not R200c)
 
 ######################## set up the environment #########################
 
 #---user modules
+import os
 import config as cfg
 import cosmo as co
 import init
@@ -27,13 +29,29 @@ import sys
 from os import path
 
 ############################# user control ##############################
+# For the dwarf sample
+idx = int(os.environ.get("SLURM_ARRAY_TASK_ID", 0))
+print('>>> SLURM_ARRAY_TASK_ID: %i'%idx)
+# idx = 0
+# hmasses = np.arange(10.5, 12.02, 0.01)
+# hmasses = np.arange(10.5, 10.6, 0.01)
+hmasses = [12.0] #np.arange(11.0, 10.6, 0.01)
+halo = hmasses[idx]
+
+print('****************************************')
+lgM0 = halo
+print('log halo mass:' + str(round(lgM0,3)))
+print('****************************************')
 
 #---target halo and desired resolution 
-lgM0 = 14.2 - np.log10(cfg.h) # log10(Msun), corresponds to 10^14.2 Msun/h
-cfg.psi_res = 10**-5.0
+# lgM0 = 14.2 - np.log10(cfg.h) # log10(Msun), corresponds to 10^14.2 Msun/h
+# cfg.psi_res = 10**-5.0
+# lgMres = lgM0 + np.log10(cfg.psi_res) # psi_{res} = 10^-5 by default
+
 z0 = 0.
-lgMres = lgM0 + np.log10(cfg.psi_res) # psi_{res} = 10^-5 by default
-Ntree = 2000
+lgMres = 7.0 # we use a fixed mass resolution for Mhalo
+# Ntree = 2000 
+# Ntree = 20 # test now
 
 #---orbital parameter sampler preference
 optype =  'zzli' # 'zzli' or 'zentner' or 'jiang'
@@ -42,16 +60,17 @@ optype =  'zzli' # 'zzli' or 'zentner' or 'jiang'
 conctype = 'zhao' # 'zhao' or 'vdb'
 
 #---for output
-outfile1 = './OUTPUT_TREE/tree%i_lgM%.2f.npz' #%(itree,lgM0)
+# outfile1 = './OUTPUT_TREE/tree%i_lgM%.2f.npz' #%(itree,lgM0)
+outfile1 = '/scratch/gpfs/JENNYG/jiaxuanl/SatGen/OUTPUT_TREE/tree%i_lgM%.3f.npz' #%(itree,lgM0)
+print(outfile1)
 
 ############################### compute #################################
 
-print('>>> Generating %i trees for log(M_0)=%.2f at log(M_res)=%.2f...'%\
-    (Ntree,lgM0,lgMres))
+# print('>>> Generating %i trees for log(M_0)=%.3f at log(M_res)=%.3f...'%\
+    # (Ntree,lgM0,lgMres))
 
 #---
 time_start = time.time()
-#for itree in range(Ntree):
 def loop(itree): 
     """
     Replaces the loop "for itree in range(Ntree):", for parallelization.
@@ -59,9 +78,11 @@ def loop(itree):
 
     # check if this one has already been ran
     if path.exists(outfile1%(itree,lgM0)):
+        print('    Tree %5i: output exists, skipping' % itree, flush=True)
         return
 
     time_start_tmp = time.time()
+    print('    Tree %5i: starting' % itree, flush=True)
     
     np.random.seed() # [important!] reseed the random number generator
     
@@ -240,12 +261,30 @@ def loop(itree):
             
     time_end_tmp = time.time()
     print('    Tree %5i: %6i branches, %2i order, %8.1f sec'\
-        %(itree,Nbranch,k,time_end_tmp-time_start_tmp))
+        %(itree,Nbranch,k,time_end_tmp-time_start_tmp), flush=True)
 
 if __name__ == "__main__":
-    Ncores = int(sys.argv[1])
-    pool = Pool(Ncores) # use as many as requested
-    pool.map(loop, range(Ntree), chunksize=1)
+    Ntree = int(sys.argv[1])
+    print('>>> CPU count: %i'%cpu_count(), flush=True)
+    ncores = int(os.environ.get("SLURM_CPUS_PER_TASK", cpu_count()))
+    ncores = max(1, min(ncores, Ntree))
+    print("    using %i cores" % ncores, flush=True)
+    print('>>> Ntree: %i' % Ntree, flush=True)
+    print('>>> Generating %i trees for log(M_0)=%.3f at log(M_res)=%.3f...'%\
+    (Ntree, lgM0, lgMres), flush=True)
+    pool = Pool(processes=ncores, maxtasksperchild=1)
+    try:
+        pool.map(loop, range(Ntree), chunksize=1)
+    except BaseException:
+        pool.terminate()
+        raise
+    else:
+        pool.close()
+    finally:
+        pool.join()
+
 
 time_end = time.time() 
-print('    total time: %5.2f hours'%((time_end - time_start)/3600.))
+print('    total time: %5.2f hours'%((time_end - time_start)/3600.), flush=True)
+
+# python TreeGen_Sub.py 10
