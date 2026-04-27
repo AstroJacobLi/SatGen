@@ -12,6 +12,11 @@
 #    which enables mass of ejected subhaloes to be removed from
 #    the corresponding host; necessary for mass conservation
 
+# Jiaxuan Li: this is the script used for ELVES-Dwarf project, paper 2 (Rvir is Rvir, not R200c). Paper1 used "SatEvo.py"
+# Difference: now it uses a mass ratio as mass resolution limit, instead of a fixed 1e7 Mres in paper1. 
+# Also the stripping efficiency is a function of concentration ratio instead of a fixed value (in paper 1 we had StrippingEfficiency = 0.6)
+# The output also contains the tidal radius and the alpha values at each step, which are not in paper1.
+
 ######################## set up the environment #########################
 
 import config as cfg
@@ -25,6 +30,7 @@ import numpy as np
 import sys
 import os 
 import time 
+import re
 from multiprocessing import Pool, cpu_count
 
 # <<< for clean on-screen prints, use with caution, make sure that 
@@ -36,10 +42,11 @@ warnings.simplefilter("ignore", UserWarning)
 ########################### user control ################################
 
 
-datadir = "./OUTPUT_TREE/"
-outdir = "./OUTPUT_SAT/"
+datadir = "/scratch/gpfs/JENNYG/jiaxuanl/SatGen/OUTPUT_TREE/"
+outdir = "/scratch/gpfs/MERIAN/user/jiaxuanl/SatGen/OUTPUT_SAT/"
 
-Rres_factor = 10**-3 # (Defunct)
+Rres_factor = 10**-3 # (Defunct) # spatial resolution
+min_Rres = 0.01 # [kpc] <<< use 0.001 if want to resolve UCDs
 
 #---stripping efficiency type
 alpha_type = 'conc' # 'fixed' or 'conc'
@@ -55,14 +62,93 @@ cfg.phi_res = 10**-5.0 # when cfg.evo_mode == 'arbres',
 
 ########################### evolve satellites ###########################
 
+tree_file_pattern = re.compile(r'tree\d+_lgM(\d+\.\d{3})\.npz')
+
+def extract_host_mass(filepath):
+    """
+    Extract the host log-mass from a TreeGen output filename.
+    """
+
+    match = tree_file_pattern.search(os.path.basename(filepath))
+    if match is None:
+        return None
+    return float(match.group(1))
+
+def select_files_by_host_mass(files):
+    """
+    Optionally select a subset of tree files by host-mass bin or range.
+    """
+
+    file_masses = []
+    for filepath in files:
+        host_mass = extract_host_mass(filepath)
+        if host_mass is not None:
+            file_masses.append((filepath, host_mass))
+
+    available_masses = sorted({host_mass for _, host_mass in file_masses})
+    if not available_masses:
+        print('>>> No valid tree files found in %s' % datadir, flush=True)
+        return [], available_masses
+
+    selected_mass = None
+    selected_index = None
+    mass_min = None
+    mass_max = None
+
+    if "SATGEN_HOST_MASS" in os.environ:
+        selected_mass = float(os.environ["SATGEN_HOST_MASS"])
+    elif "SATGEN_HOST_MASS_MIN" in os.environ or "SATGEN_HOST_MASS_MAX" in os.environ:
+        if "SATGEN_HOST_MASS_MIN" in os.environ:
+            mass_min = float(os.environ["SATGEN_HOST_MASS_MIN"])
+        if "SATGEN_HOST_MASS_MAX" in os.environ:
+            mass_max = float(os.environ["SATGEN_HOST_MASS_MAX"])
+    elif "SLURM_ARRAY_TASK_ID" in os.environ:
+        selected_index = int(os.environ["SLURM_ARRAY_TASK_ID"])
+        if selected_index < 0 or selected_index >= len(available_masses):
+            raise IndexError(
+                "SLURM_ARRAY_TASK_ID=%i is out of range for %i host-mass bins"
+                % (selected_index, len(available_masses))
+            )
+        selected_mass = available_masses[selected_index]
+
+    if selected_mass is not None:
+        selected_files = [filepath for filepath, host_mass in file_masses
+                          if host_mass == selected_mass]
+        if selected_index is None:
+            print('>>> Selected host mass bin: log(M)=%.3f' % selected_mass, flush=True)
+        else:
+            print('>>> SLURM_ARRAY_TASK_ID=%i -> host mass bin log(M)=%.3f'
+                  % (selected_index, selected_mass), flush=True)
+        return selected_files, available_masses
+
+    if mass_min is not None or mass_max is not None:
+        selected_files = []
+        for filepath, host_mass in file_masses:
+            if mass_min is not None and host_mass < mass_min:
+                continue
+            if mass_max is not None and host_mass > mass_max:
+                continue
+            selected_files.append(filepath)
+        print('>>> Selected host mass range: %.3f to %.3f'
+              % (mass_min if mass_min is not None else available_masses[0],
+                 mass_max if mass_max is not None else available_masses[-1]),
+              flush=True)
+        return selected_files, available_masses
+
+    print('>>> No host mass filter set; evolving all %i host-mass bins'
+          % len(available_masses), flush=True)
+    return [filepath for filepath, _ in file_masses], available_masses
+
 #---get the list of data files
 files = []    
 for filename in os.listdir(datadir):
     if filename.startswith('tree') and filename.endswith('.npz'): 
         files.append(os.path.join(datadir, filename))
 files.sort()
-
-
+files, available_masses = select_files_by_host_mass(files)
+print('>>> Available host-mass bins: %s'
+      % ', '.join('%.3f' % mass for mass in available_masses), flush=True)
+print('>>> %d trees selected for evolution' % len(files), flush=True)
 print('>>> Evolving subhaloes ...')
 
 #---
@@ -76,13 +162,16 @@ def loop(file):
     # skip if we already ran this one and are re-running
     # uncompleted trees on a second pass-through
     outfile = outdir + file[len(datadir):]
+    label = os.path.basename(file)
     if(os.path.exists(outfile)):
         # NOTE: This will throw error if serial
         # Change the below to "continue" for serial
+        print('    %s: output exists, skipping' % label, flush=True)
         return
         #continue
 
-    time_start_tmp = time.time()  
+    time_start_tmp = time.time()
+    print('    %s: starting' % label, flush=True)
     
     #---load trees
     f = np.load(file)
@@ -111,7 +200,7 @@ def loop(file):
     #   Defunct, we no longer use an Rres; all subhaloes are evolved
     #   until their mass falls below resolution limit
     min_rvir = VirialRadius[0, np.argwhere(VirialRadius[0,:] > 0)[-1][0]]
-    cfg.Rres = min(0.1, min_rvir * Rres_factor) # Never larger than 100 pc
+    cfg.Rres = min(min_Rres, min_rvir * Rres_factor) # Never larger than 100 pc
 
     #---list of potentials and orbits for each branch
     #   additional, mass of ejected subhaloes stored in ejected_mass
@@ -125,6 +214,8 @@ def loop(file):
     M0 = mass[0,0]
     min_mass = np.zeros(mass.shape[0])
 
+    total_steps = izmax
+
     #---evolve
     for iz in np.arange(izmax, 0, -1): # loop over time to evolve
         iznext = iz - 1                
@@ -133,6 +224,12 @@ def loop(file):
         tnext = CosmicTime[iznext]
         dt = tnext - tcurrent
         Dv = VirialOverdensity[iz]
+
+        completed_steps = izmax - iz + 1
+        if completed_steps == 1 or completed_steps % 50 == 0 or iz == 1:
+            print('    %s: step %3i/%3i, z=%5.2f, active branches=%4i' % (
+                label, completed_steps, total_steps, z, len(idx)
+            ), flush=True)
 
         for level in levels: #loop from low-order to high-order systems
             for id in idx: # loop over branches
@@ -151,10 +248,10 @@ def loop(file):
                         # some edge case produces nan in velocities in TreeGen
                         # if so, print warning and mass fraction lost
                         if(np.any(np.isnan(xva))):
-                            print('    WARNING: NaNs detected in init xv of id %d'\
-                                % id)
-                            print('    Mass fraction of tree lost: %.1e'\
-                                % (ma/mass[0,0]))
+                            print('    %s: WARNING: NaNs detected in init xv of id %d'\
+                                % (label, id), flush=True)
+                            print('    %s: mass fraction of tree lost: %.1e'\
+                                % (label, ma/mass[0,0]), flush=True)
                             mass[id,:] = -99.
                             coordinates[id,:,:] = 0.
                             idx = np.delete(idx, np.argwhere(idx == id)[0])
@@ -306,8 +403,10 @@ def loop(file):
                         # an lt assigned if they aren't evolved one step. This can
                         # be fixed by lowering the resolution limit of SubEvo
                         # relative to TreeGen by some tiny epsilon, say 0.05 dex
-                        print("No lt for id ", id, "iz ", iz, "masses ",
-                              np.log10(mass[id,iz]), np.log10(mass[id,iznext]), file)
+                        print("    %s: no lt for id %d iz %d masses %.6f %.6f" % (
+                              label, id, iz,
+                              np.log10(mass[id,iz]), np.log10(mass[id,iznext])
+                              ), flush=True)
                         return
 
                     # NOTE: We store tidal radius in lieu of virial radius
@@ -355,8 +454,7 @@ def loop(file):
     
     time_end_tmp = time.time()
     print('    %s: %5.2f min, z50=%5.2f,fsub=%8.5f'%\
-        (outfile,(time_end_tmp-time_start_tmp)/60., z50,fsub))
-    sys.stdout.flush()
+        (outfile,(time_end_tmp-time_start_tmp)/60., z50,fsub), flush=True)
 
 #---for parallelization, comment for testing in serial mode
 if __name__ == "__main__":
@@ -364,8 +462,11 @@ if __name__ == "__main__":
         Ncores = int(sys.argv[1])
     else:
         Ncores = cpu_count()
+    print('    using %i cores' % Ncores, flush=True)
     pool = Pool(Ncores) # use as many as requested
     pool.map(loop, np.random.permutation(files), chunksize=1)
 
 time_end = time.time() 
-print('    total time: %5.2f hours'%((time_end - time_start)/3600.))
+print('    total time: %5.2f hours'%((time_end - time_start)/3600.), flush=True)
+
+# python SubEvo.py 1

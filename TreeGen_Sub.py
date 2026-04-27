@@ -33,9 +33,10 @@ from os import path
 idx = int(os.environ.get("SLURM_ARRAY_TASK_ID", 0))
 print('>>> SLURM_ARRAY_TASK_ID: %i'%idx)
 # idx = 0
-# hmasses = np.arange(10.5, 12.02, 0.01)
+# hmasses = np.arange(10.5, 12.5, 0.01)
 # hmasses = np.arange(10.5, 10.6, 0.01)
-hmasses = [12.0] #np.arange(11.0, 10.6, 0.01)
+# hmasses = [12.5, 12.5] #np.arange(11.0, 10.6, 0.01)
+hmasses = np.arange(10.5, 12.6, 0.01)
 halo = hmasses[idx]
 
 print('****************************************')
@@ -50,8 +51,6 @@ print('****************************************')
 
 z0 = 0.
 lgMres = 7.0 # we use a fixed mass resolution for Mhalo
-# Ntree = 2000 
-# Ntree = 20 # test now
 
 #---orbital parameter sampler preference
 optype =  'zzli' # 'zzli' or 'zentner' or 'jiang'
@@ -61,8 +60,10 @@ conctype = 'zhao' # 'zhao' or 'vdb'
 
 #---for output
 # outfile1 = './OUTPUT_TREE/tree%i_lgM%.2f.npz' #%(itree,lgM0)
-outfile1 = '/scratch/gpfs/JENNYG/jiaxuanl/SatGen/OUTPUT_TREE/tree%i_lgM%.3f.npz' #%(itree,lgM0)
+# outfile1 = '/scratch/gpfs/JENNYG/jiaxuanl/SatGen/OUTPUT_TREE/tree%i_lgM%.3f.npz' #%(itree,lgM0)
+outfile1 = '/scratch/gpfs/MERIAN/user/jiaxuanl/SatGen/OUTPUT_TREE/tree%i_lgM%.3f.npz' #%(itree,lgM0)
 print(outfile1)
+max_retries = int(os.environ.get("SATGEN_MAX_RETRIES", 2))
 
 ############################### compute #################################
 
@@ -71,25 +72,24 @@ print(outfile1)
 
 #---
 time_start = time.time()
-def loop(itree): 
+def _generate_tree(itree, attempt): 
     """
-    Replaces the loop "for itree in range(Ntree):", for parallelization.
+    Generate a single merger tree.
     """
-
-    # check if this one has already been ran
-    if path.exists(outfile1%(itree,lgM0)):
-        print('    Tree %5i: output exists, skipping' % itree, flush=True)
-        return
 
     time_start_tmp = time.time()
-    print('    Tree %5i: starting' % itree, flush=True)
+    print('    Tree %5i: starting attempt %i/%i' % (
+        itree, attempt, max_retries + 1
+    ), flush=True)
     
     np.random.seed() # [important!] reseed the random number generator
+    print('    Tree %5i: random seed: %i' % (itree, np.random.get_state()[1][0]), flush=True)
     
     cfg.M0 = 10.**lgM0
     cfg.z0 = z0
     cfg.Mres = 10.**lgMres 
     cfg.Mmin = 0.04*cfg.Mres
+    cfg.psi_res = 10**(lgMres - lgM0 - 0.5)
     
     k = 0               # the level, k, of the branch being considered
     ik = 0              # how many level-k branches have been finished
@@ -263,6 +263,32 @@ def loop(itree):
     print('    Tree %5i: %6i branches, %2i order, %8.1f sec'\
         %(itree,Nbranch,k,time_end_tmp-time_start_tmp), flush=True)
 
+def loop(itree):
+    """
+    Replaces the loop "for itree in range(Ntree):", for parallelization.
+    """
+
+    outfile = outfile1 % (itree, lgM0)
+    if path.exists(outfile):
+        print('    Tree %5i: output exists, skipping' % itree, flush=True)
+        return
+
+    for attempt in range(1, max_retries + 2):
+        try:
+            _generate_tree(itree, attempt)
+            return
+        except Exception as exc:
+            if path.exists(outfile):
+                os.remove(outfile)
+            if attempt > max_retries:
+                print('    Tree %5i: failed after %i attempts: %s: %s' % (
+                    itree, attempt, type(exc).__name__, exc
+                ), flush=True)
+                raise
+            print('    Tree %5i: attempt %i failed with %s: %s; retrying' % (
+                itree, attempt, type(exc).__name__, exc
+            ), flush=True)
+
 if __name__ == "__main__":
     Ntree = int(sys.argv[1])
     print('>>> CPU count: %i'%cpu_count(), flush=True)
@@ -287,4 +313,4 @@ if __name__ == "__main__":
 time_end = time.time() 
 print('    total time: %5.2f hours'%((time_end - time_start)/3600.), flush=True)
 
-# python TreeGen_Sub.py 10
+# python TreeGen_Sub.py 1
