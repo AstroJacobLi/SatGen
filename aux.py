@@ -148,7 +148,12 @@ def downsample(y,x,xgrid):
         # xsample is the subset of xgrid, such that the first element of 
         # xsample is higher than the first element of the fine-grid x.
     if len(xsample)==0: 
-        xsample = xgrid[idx1+1] # a safety measure that deals with the 
+        # xsample = xgrid[idx1+1] # a safety measure that deals with the 
+        # # rare cases where idx1 and idx2 are the same -- this can happen
+        # # when all the elements of x are close to a single xgrid element.
+
+        # JL: fixed the above line to be idx1 instead of idx1+1
+        xsample = xgrid[idx1] # a safety measure that deals with the 
         # rare cases where idx1 and idx2 are the same -- this can happen
         # when all the elements of x are close to a single xgrid element.
     idx = FindClosestIndices(x,xsample)

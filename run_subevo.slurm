@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=20
 #SBATCH --mem-per-cpu=4G
 #SBATCH --time=11:59:00
-#SBATCH --array=[150-200]
+#SBATCH --array=[200]
 #SBATCH --export=ALL
 #SBATCH --mail-type=NONE
 #SBATCH --mail-user=jiaxuanl@princeton.edu

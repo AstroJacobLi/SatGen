@@ -147,18 +147,21 @@ ztlkbk_interp = interp1d(tlkbk_grid, z_grid, kind='linear')
 
 print('>>> Preparing output redshifts for merger trees ...')
 Nmax = 500000 # maximum number of branches per tree
-zsample = [z0]
+zsample = [] # Dylan Folsom: remove z0 from zsample as it is now added in during the loop
 dtsample = []
 z = z0
 while z<=zmax:
     tlkbk = co.tlkbk(z,h,Om,OL)
     tdyn = co.tdyn(z,h,Om,OL) # NOTE: This uses BN98 for Delta
     dt = min(0.06, 0.1 * tdyn)
-    # NOTE: The above sets the maximum output time step to be 0.06 Gyr
-    z = ztlkbk_interp(tlkbk+dt)
+
+    # DF: 2024/09/04: move these lines before redefinition of z to prevent zsample[-1] > zmax
     zsample.append(z)
     dtsample.append(dt)
-dtsample.append(0.) # append a zero to the end, making dtsample the same 
+    # NOTE: The above sets the maximum output time step to be 0.06 Gyr
+
+    z = ztlkbk_interp(tlkbk+dt) # DF: only increase z at the end of the loop
+# dtsample.append(0.) # append a zero to the end, making dtsample the same 
     # length as zsample
 zsample = np.array(zsample)
 dtsample = np.array(dtsample)

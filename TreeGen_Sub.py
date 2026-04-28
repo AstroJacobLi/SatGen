@@ -37,6 +37,7 @@ print('>>> SLURM_ARRAY_TASK_ID: %i'%idx)
 # hmasses = np.arange(10.5, 10.6, 0.01)
 # hmasses = [12.5, 12.5] #np.arange(11.0, 10.6, 0.01)
 hmasses = np.arange(10.5, 12.6, 0.01)
+# hmasses = [12.50] * 1000
 halo = hmasses[idx]
 
 print('****************************************')
@@ -63,7 +64,7 @@ conctype = 'zhao' # 'zhao' or 'vdb'
 # outfile1 = '/scratch/gpfs/JENNYG/jiaxuanl/SatGen/OUTPUT_TREE/tree%i_lgM%.3f.npz' #%(itree,lgM0)
 outfile1 = '/scratch/gpfs/MERIAN/user/jiaxuanl/SatGen/OUTPUT_TREE/tree%i_lgM%.3f.npz' #%(itree,lgM0)
 print(outfile1)
-max_retries = int(os.environ.get("SATGEN_MAX_RETRIES", 2))
+max_retries = int(os.environ.get("SATGEN_MAX_RETRIES", 0))
 
 ############################### compute #################################
 
@@ -83,7 +84,6 @@ def _generate_tree(itree, attempt):
     ), flush=True)
     
     np.random.seed() # [important!] reseed the random number generator
-    print('    Tree %5i: random seed: %i' % (itree, np.random.get_state()[1][0]), flush=True)
     
     cfg.M0 = 10.**lgM0
     cfg.z0 = z0
@@ -108,7 +108,7 @@ def _generate_tree(itree, attempt):
     
     mass = np.zeros((cfg.Nmax,cfg.Nz)) - 99.
     order = np.zeros((cfg.Nmax,cfg.Nz),np.int8) - 99
-    ParentID = np.zeros((cfg.Nmax,cfg.Nz),np.int16) - 99
+    ParentID = np.zeros((cfg.Nmax,cfg.Nz),np.int32) - 99
     
     VirialRadius = np.zeros((cfg.Nmax,cfg.Nz),np.float32) - 99.
     concentration = np.zeros((cfg.Nmax,cfg.Nz),np.float32) - 99.

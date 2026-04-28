@@ -42,7 +42,8 @@ warnings.simplefilter("ignore", UserWarning)
 ########################### user control ################################
 
 
-datadir = "/scratch/gpfs/JENNYG/jiaxuanl/SatGen/OUTPUT_TREE/"
+# datadir = "/scratch/gpfs/JENNYG/jiaxuanl/SatGen/OUTPUT_TREE/"
+datadir = '/scratch/gpfs/MERIAN/user/jiaxuanl/SatGen/OUTPUT_TREE/'
 outdir = "/scratch/gpfs/MERIAN/user/jiaxuanl/SatGen/OUTPUT_SAT/"
 
 Rres_factor = 10**-3 # (Defunct) # spatial resolution
@@ -146,6 +147,12 @@ for filename in os.listdir(datadir):
         files.append(os.path.join(datadir, filename))
 files.sort()
 files, available_masses = select_files_by_host_mass(files)
+host_mass_selected = np.unique([extract_host_mass(file) for file in files])
+print("Host masses selected:", host_mass_selected)
+cfg.Mres = 10**7.0
+cfg.psi_res = 10**(np.log10(cfg.Mres) - np.max(host_mass_selected) - 0.5)
+print('>>> Mass resolution ratio psi_res = %.1e' % cfg.psi_res, flush=True)
+
 print('>>> Available host-mass bins: %s'
       % ', '.join('%.3f' % mass for mass in available_masses), flush=True)
 print('>>> %d trees selected for evolution' % len(files), flush=True)
@@ -158,7 +165,7 @@ def loop(file):
     """
     Replaces the loop "for file in files:", for parallelization.
     """
-
+    print(file)
     # skip if we already ran this one and are re-running
     # uncompleted trees on a second pass-through
     outfile = outdir + file[len(datadir):]
