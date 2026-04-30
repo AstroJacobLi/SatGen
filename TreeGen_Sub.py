@@ -29,6 +29,8 @@ import sys
 from os import path
 
 ############################# user control ##############################
+overwrite = True # whether to overwrite existing output files; if False, will skip trees with existing output files
+
 # For the dwarf sample
 idx = int(os.environ.get("SLURM_ARRAY_TASK_ID", 0))
 print('>>> SLURM_ARRAY_TASK_ID: %i'%idx)
@@ -61,8 +63,8 @@ conctype = 'zhao' # 'zhao' or 'vdb'
 
 #---for output
 # outfile1 = './OUTPUT_TREE/tree%i_lgM%.2f.npz' #%(itree,lgM0)
-# outfile1 = '/scratch/gpfs/JENNYG/jiaxuanl/SatGen/OUTPUT_TREE/tree%i_lgM%.3f.npz' #%(itree,lgM0)
-outfile1 = '/scratch/gpfs/MERIAN/user/jiaxuanl/SatGen/OUTPUT_TREE/tree%i_lgM%.3f.npz' #%(itree,lgM0)
+outfile1 = '/scratch/gpfs/JENNYG/jiaxuanl/SatGen/OUTPUT_TREE/tree%i_lgM%.3f.npz' #%(itree,lgM0)
+# outfile1 = '/scratch/gpfs/MERIAN/user/jiaxuanl/SatGen/OUTPUT_TREE/tree%i_lgM%.3f.npz' #%(itree,lgM0)
 print(outfile1)
 max_retries = int(os.environ.get("SATGEN_MAX_RETRIES", 0))
 
@@ -269,7 +271,7 @@ def loop(itree):
     """
 
     outfile = outfile1 % (itree, lgM0)
-    if path.exists(outfile):
+    if not overwrite and path.exists(outfile):
         print('    Tree %5i: output exists, skipping' % itree, flush=True)
         return
 

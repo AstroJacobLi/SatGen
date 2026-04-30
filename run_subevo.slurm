@@ -2,10 +2,10 @@
 #SBATCH -J SubEvo_jobs
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=20
+#SBATCH --cpus-per-task=50
 #SBATCH --mem-per-cpu=4G
-#SBATCH --time=11:59:00
-#SBATCH --array=[200]
+#SBATCH --time=23:59:00
+#SBATCH --array=[100-150]
 #SBATCH --export=ALL
 #SBATCH --mail-type=NONE
 #SBATCH --mail-user=jiaxuanl@princeton.edu

@@ -42,9 +42,9 @@ warnings.simplefilter("ignore", UserWarning)
 ########################### user control ################################
 
 
-# datadir = "/scratch/gpfs/JENNYG/jiaxuanl/SatGen/OUTPUT_TREE/"
-datadir = '/scratch/gpfs/MERIAN/user/jiaxuanl/SatGen/OUTPUT_TREE/'
-outdir = "/scratch/gpfs/MERIAN/user/jiaxuanl/SatGen/OUTPUT_SAT/"
+datadir = "/scratch/gpfs/JENNYG/jiaxuanl/SatGen/OUTPUT_TREE/"
+# datadir = '/scratch/gpfs/MERIAN/user/jiaxuanl/SatGen/OUTPUT_TREE/'
+outdir = "/scratch/gpfs/JENNYG/jiaxuanl/SatGen/OUTPUT_SAT/"
 
 Rres_factor = 10**-3 # (Defunct) # spatial resolution
 min_Rres = 0.01 # [kpc] <<< use 0.001 if want to resolve UCDs
@@ -150,8 +150,8 @@ files, available_masses = select_files_by_host_mass(files)
 host_mass_selected = np.unique([extract_host_mass(file) for file in files])
 print("Host masses selected:", host_mass_selected)
 cfg.Mres = 10**7.0
-cfg.psi_res = 10**(np.log10(cfg.Mres) - np.max(host_mass_selected) - 0.5)
-print('>>> Mass resolution ratio psi_res = %.1e' % cfg.psi_res, flush=True)
+# cfg.psi_res = 10**(np.log10(cfg.Mres) - np.max(host_mass_selected) - 0.5)
+# print('>>> Mass resolution ratio psi_res = %.1e' % cfg.psi_res, flush=True)
 
 print('>>> Available host-mass bins: %s'
       % ', '.join('%.3f' % mass for mass in available_masses), flush=True)
@@ -170,12 +170,14 @@ def loop(file):
     # uncompleted trees on a second pass-through
     outfile = outdir + file[len(datadir):]
     label = os.path.basename(file)
-    if(os.path.exists(outfile)):
-        # NOTE: This will throw error if serial
-        # Change the below to "continue" for serial
-        print('    %s: output exists, skipping' % label, flush=True)
-        return
-        #continue
+
+
+    # if(os.path.exists(outfile)):
+    #     # NOTE: This will throw error if serial
+    #     # Change the below to "continue" for serial
+    #     print('    %s: output exists, skipping' % label, flush=True)
+    #     return
+    #     #continue
 
     time_start_tmp = time.time()
     print('    %s: starting' % label, flush=True)
@@ -448,7 +450,8 @@ def loop(file):
         concentration = concentration, # this is unchanged from TreeGen output
         coordinates = coordinates,
         )
-    
+    print('    %s: output saved' % label, flush=True)
+
     #---on-screen prints
     m0 = mass[:,0][1:]
     
