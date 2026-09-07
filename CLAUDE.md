@@ -85,8 +85,21 @@ deferred `update_mass` ordering.
       output, optional `alpha_range` guard.
       Verified: R_vir/R_200c = 1.2552 at z=0 (Delta = 101.1); 0 empty
       branch rows; `ParentID` int32.
-- [ ] `SubEvo.py` fork: fixed-`Mres` switch + stale-`lt` fix first, then
-      the Dekel branch, then galaxies, then the disk
+- [x] **`SubEvo.py` step 1** (commit `3524498`) — single `evo_mode`
+      switch (`fixed` | `arbres` | `withering`) setting `cfg.Mres` and
+      `min_mass[]` together (fixes issue 5); per-branch `lt`/`rte`
+      sentinels (fixes issue 7); removed the `UnboundLocalError` bare
+      `return` that aborted whole tree files; `GreenRte` left at -99
+      below the floor. Default `fixed`, `lgMres_evo = 6.95`.
+      Verified: 42/56 subhaloes terminate at the floor (previously
+      none); no NaN/Inf; the floor==tree-resolution case completes.
+- [ ] `SubEvo.py` step 2: `profile_type` switch, Dekel branch
+      (needs `Dekel.Minit` and a `.c2()` accessor — issues 3 and 4)
+- [ ] `SubEvo.py` step 3: in-loop galaxies (`ev.g_EPW18`) with
+      per-branch state arrays; port off `scipy.interp2d`
+- [ ] `SubEvo.py` step 4: MN host disk (needs issue 2 fixed first)
+- [ ] Validation: run `profile_type='green'`, `fd=0` at fixed seed and
+      check it reproduces the existing `SubEvo` output tree-for-tree
 - [ ] `TreeGen_Sub.py` left as the DMO path (unchanged)
 
 ### Deferred (agreed to handle later)
@@ -200,19 +213,21 @@ Jiaxuan's call. **Not yet decided.**
    the stripping efficiency by up to 31%. Add a `.c2()` accessor to each
    profile class rather than reading `.ch`.
 
-5. **`SubEvo.py` sets `cfg.Mres = 10**7.0` (line ~152) while
+5. **[FIXED in `3524498`]** `SubEvo.py` set `cfg.Mres = 10**7.0` while
    `min_mass[id] = cfg.phi_res * ma`.** These disagree: `ev.msub` floors
    mass at 1e7 but the disruption test is at `1e-5*m_acc`, so nothing
    ever terminates. Upstream never sets `cfg.Mres`. Must be made
    consistent in the hybrid. Probably explains the ~340 min/tree runtime.
 
-6. **Do not set the evolution floor equal to the tree floor.** A subhalo
+6. **[MITIGATED in `3524498`]** Do not set the evolution floor equal
+   to the tree floor. A subhalo
    accreted at exactly the tree resolution never gets an `msub` call,
    `lt` is unbound, and the `except UnboundLocalError` handler does
    `return` — **silently aborting the whole tree file with no output**.
    Use tree `lgMres = 7.0`, evolution `cfg.Mres = 10**6.95`.
 
-7. **Stale `lt` / `rte` across branches in `SubEvo.py`.** Both are
+7. **[FIXED in `3524498`]** Stale `lt` / `rte` across branches in
+   `SubEvo.py`. Both are
    function locals that persist for the whole `loop(file)` call. When a
    subhalo is below the floor neither is recomputed, yet both are still
    written to the output arrays. In `SatEvo`'s branch-outer ordering the
