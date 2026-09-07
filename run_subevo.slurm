@@ -4,8 +4,8 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=50
 #SBATCH --mem-per-cpu=4G
-#SBATCH --time=23:59:00
-#SBATCH --array=[100-150]
+#SBATCH --time=72:00:00
+#SBATCH --array=[150-200]
 #SBATCH --export=ALL
 #SBATCH --mail-type=NONE
 #SBATCH --mail-user=jiaxuanl@princeton.edu

@@ -172,12 +172,12 @@ def loop(file):
     label = os.path.basename(file)
 
 
-    # if(os.path.exists(outfile)):
-    #     # NOTE: This will throw error if serial
-    #     # Change the below to "continue" for serial
-    #     print('    %s: output exists, skipping' % label, flush=True)
-    #     return
-    #     #continue
+    if(os.path.exists(outfile)):
+        # NOTE: This will throw error if serial
+        # Change the below to "continue" for serial
+        print('    %s: output exists, skipping' % label, flush=True)
+        return
+        #continue
 
     time_start_tmp = time.time()
     print('    %s: starting' % label, flush=True)
