@@ -100,8 +100,11 @@ alpha_range=None    : frac a<0 = 0.177   a in [-44.84, 368.75]   cDekel max = 1.
 alpha_range=(0,1.9) : frac a<0 = 0.000   a in [  0.00,   1.90]   cDekel max = 74
 ```
 
-Recommendation: `(0., 1.9)`. Changes results relative to paper 1, so it
-is Jiaxuan's call. **Not yet decided.**
+Recommendation: **`(0., 1.9)`**, upgraded from "your call" once the
+dwarf-run numbers came in -- 96.4% of low-z host snapshots in
+`OUTPUT_SAT_DWARF_..._ZZLi_11` have alpha < 0, with negative and NaN
+densities following. Changes results relative to paper 1, so it is still
+Jiaxuan's call. **Not yet decided.**
 
 ## Known issues (all verified against real data)
 
@@ -113,8 +116,41 @@ is Jiaxuan's call. **Not yet decided.**
    density *hole*, not a core.
    In `sdanieli/OUTPUT_SAT_fd0.00_fb0.00_NIHAO_0/tree0_lgM13.49.npz`:
    1.1% of all entries, rising to 1.6% at z < 0.5; `cDekel` max 2.8e8;
-   **the main host at z=0 has alpha = -1.69**. Affects every paper-1
-   run. Mitigated by `alpha_range`.
+   the main host at z=0 has alpha = -1.69.
+
+   **Far worse in the dwarf runs.** In
+   `OUTPUT_SAT_DWARF_fd0.00_fb0.00_NIHAO_ZZLi_11`, over 30 hosts and
+   snapshots iz < 50 (z < 0.26):
+
+   ```
+   alpha < 0               : 0.964   <- 96% of low-z host snapshots
+   rho(0.1 Rv) NaN         : 0.009
+   rho(0.1 Rv) NEGATIVE    : 0.015
+   M(<0.1 Rv) > M_host     : 0.019   <- unphysical
+   ```
+
+   The host parameters do not drift, they thrash between adjacent
+   snapshots (see issue 9), e.g. for `tree11_lgM11.50.npz`:
+   alpha = -374 (iz=0), -29 (iz=1), **+41** (iz=2), -6.9 (iz=3),
+   **+12.5** (iz=4). At iz=2 and iz=4, `rho` is negative and
+   M(<10 kpc) = 1.5e12 against a host mass of 3.2e11.
+
+   NaN mechanism: `x**alpha` underflows to 0 while
+   `(1+sqrt(x))**(2*(3.5-alpha))` overflows to inf, so `0*inf = nan`.
+
+   **This is probably why the scipy pin exists.** Reproducing the z=0
+   stripping step for that file raises
+   `ValueError: The function value at x=0.01 is NaN` from scipy's
+   `brentq` NaN guard, yet the shipped output has no NaNs and a normal
+   z=0 step. Most likely scipy 1.10.1 lacked that guard and `brentq`
+   returned a garbage root instead of raising -- which matches
+   run_satgen/README.md ("Newer versions of scipy will make SatGen
+   crash"). If so the pin masked this bug rather than avoiding it.
+   NOT yet proven; confirming means installing scipy 1.10.1 and
+   re-running one satellite.
+
+   Affects every paper-1 run. Mitigated by `alpha_range`; given the 96%
+   figure, **recommend turning it on**.
 
 2. **`ev.lt_King62_RHS` evaluates the host density in the midplane.**
    It calls `pr.rho(potential, r)`, and `pr.rho(potential, R, z=0.)`
@@ -133,6 +169,13 @@ is Jiaxuan's call. **Not yet decided.**
    solution; those need a fallback (hold previous `lt`), not `Rres`.
    **Any run with `fd > 0` is affected** — including
    `sdanieli/OUTPUT_SAT_fd0.10_fb0.00_NIHAO_0`.
+   **Runs with `fd = 0` are NOT affected** -- the `if (fd > 0.0) and
+   (k == 1)` gate in `SatEvo.py` leaves the potential as a single
+   spherical `Dekel`, for which `pr.rho(potential, r)` is correct.
+   Checked explicitly on
+   `OUTPUT_SAT_DWARF_fd0.00_fb0.00_NIHAO_ZZLi_11`: the King62 RHS was
+   never negative at iz = 0, 5, 10, 20, 40, 70, 100
+   (median dlnM/dlnr ~ 0.3-0.6).
 
 3. **`Dekel` has no `.Minit`.** `ev.msub`'s arbres branch does
    `max(sp.Mh-dm, cfg.phi_res*sp.Minit)`, which only `Green` provides.
