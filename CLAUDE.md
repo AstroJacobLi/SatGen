@@ -89,6 +89,17 @@ deferred `update_mass` ordering.
       the Dekel branch, then galaxies, then the disk
 - [ ] `TreeGen_Sub.py` left as the DMO path (unchanged)
 
+### Deferred (agreed to handle later)
+
+- [ ] **Dekel-alpha pole** (issue 1). Decide `alpha_range`; then decide
+      whether paper-1 low-z dwarf results need revisiting, and whether
+      to test the scipy-1.10.1 `brentq` hypothesis.
+- [ ] **Disk midplane-density bug** (issue 2). Fix
+      `ev.lt_King62_RHS` / `ev.lt_Tormen98_RHS` to use
+      `pr.rho(potential, xv[0], xv[2])`, and add a fallback for genuine
+      midplane crossings (hold the previous `lt`, do not drop to
+      `cfg.Rres`). Only needed once the hybrid turns the disk on.
+
 ## Open decision
 
 **`alpha_range` in `TreeGen.py`.** Default `None` reproduces upstream
