@@ -55,11 +55,37 @@ alpha_type = 'conc' # 'fixed' or 'conc'
 #---dynamical friction strength
 cfg.lnL_pref = 0.75 # Fiducial, but can also use 1.0
 
-#---evolution mode (resolution limit in m/m_{acc} or m/M_0)
-cfg.evo_mode = 'arbres' # or 'withering'
-cfg.phi_res = 10**-5.0 # when cfg.evo_mode == 'arbres',
-#                        cfg.phi_res sets the lower limit in m/m_{acc}
-#                        that subhaloes evolve down until
+#---evolution mode (where subhaloes stop being evolved)
+#
+#   'fixed'     stop at a fixed halo mass, cfg.Mres.  Paper-1 behaviour.
+#               Note this imposes a MASS-DEPENDENT effective f_b floor:
+#               1e-3 for m_acc = 1e10 but 1e-1 for m_acc = 1e8, so
+#               artificial disruption is worst for the lowest-mass
+#               satellites.  Worth checking counts against 'arbres'.
+#   'arbres'    stop at cfg.phi_res * m_acc.  Green+21 behaviour; only
+#               defensible with the Green profile, since the
+#               Penarrubia+10 tracks behind the Dekel profile are not
+#               calibrated below f_b ~ 1e-3 (see CLAUDE.md issue 8).
+#   'withering' stop at cfg.psi_res * M0.
+#
+# IMPORTANT: in 'fixed' mode keep lgMres_evo ~0.05 dex BELOW the tree's
+# lgMres.  If they are equal, a subhalo accreted at exactly the tree
+# resolution never gets a single msub call (see the lt sentinel below).
+cfg.evo_mode = 'fixed' # 'fixed' | 'arbres' | 'withering'
+
+lgMres_evo = 6.95      # [log10 Msun] used when evo_mode == 'fixed'
+cfg.phi_res = 10**-5.0 # used when evo_mode == 'arbres'
+cfg.psi_res = 10**-5.0 # used when evo_mode == 'withering'
+
+# ev.msub takes the 'fixed' path iff cfg.Mres is not None, so the floor
+# used inside msub and the disruption test below must be set together.
+# Upstream SubEvo never set cfg.Mres, but this fork did while leaving
+# min_mass at phi_res*m_acc -- the two disagreed and nothing ever
+# terminated (CLAUDE.md issue 5).
+if cfg.evo_mode == 'fixed':
+    cfg.Mres = 10**lgMres_evo
+else:
+    cfg.Mres = None
 
 ########################### evolve satellites ###########################
 
@@ -149,9 +175,11 @@ files.sort()
 files, available_masses = select_files_by_host_mass(files)
 host_mass_selected = np.unique([extract_host_mass(file) for file in files])
 print("Host masses selected:", host_mass_selected)
-cfg.Mres = 10**7.0
-# cfg.psi_res = 10**(np.log10(cfg.Mres) - np.max(host_mass_selected) - 0.5)
-# print('>>> Mass resolution ratio psi_res = %.1e' % cfg.psi_res, flush=True)
+if cfg.evo_mode == 'fixed':
+    print('>>> evo_mode=fixed, cfg.Mres = 10^%.2f' % lgMres_evo, flush=True)
+else:
+    print('>>> evo_mode=%s, cfg.Mres = None (msub floors on the ratio)'
+          % cfg.evo_mode, flush=True)
 
 print('>>> Available host-mass bins: %s'
       % ', '.join('%.3f' % mass for mass in available_masses), flush=True)
@@ -272,10 +300,15 @@ def loop(file):
                         orbits[id] = orbit(xva)
                         trelease[id] = ta
 
-                        if cfg.evo_mode == 'arbres':
+                        if cfg.evo_mode == 'fixed':
+                            min_mass[id] = cfg.Mres
+                        elif cfg.evo_mode == 'arbres':
                             min_mass[id] = cfg.phi_res * ma
                         elif cfg.evo_mode == 'withering':
                             min_mass[id] = cfg.psi_res * M0
+                        else:
+                            raise ValueError('bad evo_mode: %s'
+                                             % cfg.evo_mode)
 
                     #---main loop for evolution
 
@@ -284,6 +317,16 @@ def loop(file):
                     ip = ParentID[id,iz]
                     p = potentials[ip]
                     s = potentials[id]
+
+                    # lt and rte are function locals that persist across
+                    # the whole loop(file) call.  In SatEvo's
+                    # branch-outer ordering a stale value was this
+                    # branch's own previous timestep, which was the
+                    # documented intent.  In this z-outer ordering it
+                    # would be ANOTHER BRANCH's value, and VirialRadius
+                    # feeds the high-order release test.  Sentinel them.
+                    lt = None
+                    rte = None
 
                     # update mass of subhalo object based on mass-loss in previous snapshot
                     # we wait to do it until now so that the pre-stripped subhalo can be used
@@ -294,7 +337,7 @@ def loop(file):
                         if(ejected_mass[id] > 0):
                             mass[id,iz] -= ejected_mass[id]
                             ejected_mass[id] = 0
-                            mass[id,iz] = max(mass[id,iz], cfg.phi_res*s.Minit)
+                            mass[id,iz] = max(mass[id,iz], min_mass[id])
 
                         s.update_mass(mass[id,iz])
                         rte = s.rte()
@@ -404,23 +447,24 @@ def loop(file):
                     mass[id,iznext] = m
                     order[id,iznext] = k
                     ParentID[id,iznext] = ip
-                    try:
-                        VirialRadius[id,iznext] = lt # storing tidal radius
-                    except UnboundLocalError:
-                        # TreeGen gives a few subhaloes with root mass below the
-                        # given resolution limit so some subhaloes will never get
-                        # an lt assigned if they aren't evolved one step. This can
-                        # be fixed by lowering the resolution limit of SubEvo
-                        # relative to TreeGen by some tiny epsilon, say 0.05 dex
-                        print("    %s: no lt for id %d iz %d masses %.6f %.6f" % (
-                              label, id, iz,
-                              np.log10(mass[id,iz]), np.log10(mass[id,iznext])
-                              ), flush=True)
-                        return
+                    if lt is not None:
+                        # NOTE: We store tidal radius in lieu of virial
+                        # radius for haloes after they start getting
+                        # stripped
+                        VirialRadius[id,iznext] = lt
+                    else:
+                        # Subhalo is at/below the resolution floor and was
+                        # not evolved this step, so it has no new tidal
+                        # radius.  Freeze its own last value rather than
+                        # inheriting another branch's (upstream raised
+                        # UnboundLocalError here and aborted the whole
+                        # tree file, writing no output at all).
+                        VirialRadius[id,iznext] = VirialRadius[id,iz]
 
-                    # NOTE: We store tidal radius in lieu of virial radius
-                    # for haloes after they start getting stripped
-                    GreenRte[id,iz] = rte 
+                    if rte is not None:
+                        GreenRte[id,iz] = rte
+                        # left at -99 otherwise, which is what the output
+                        # comment below promises
                     coordinates[id,iznext,:] = xv
 
                     # NOTE: the below two are quantities at current timestep
@@ -455,7 +499,7 @@ def loop(file):
     #---on-screen prints
     m0 = mass[:,0][1:]
     
-    msk = (m0 > cfg.psi_res*M0) & (m0 < M0) & order[1:,0] == 1
+    msk = (m0 > min_mass[1:]) & (m0 < M0) & (order[1:,0] == 1)
     fsub = m0[msk].sum() / M0
     
     MAH = mass[0,:]
