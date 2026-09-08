@@ -50,6 +50,72 @@ scripts selecting different options from one library.
 | High-order release | deterministic `r > R_vir` | probabilistic `P = alpha*dt/t_dyn` |
 | Resolution | fixed `cfg.Mres` | `arbres`: `phi_res * m_acc` |
 
+## Tree generators: `TreeGen.py` vs `TreeGen_Sub.py`
+
+Both live on the `hybrid` branch and are maintained in parallel. Since
+commit `c5171cd` they agree on geometry -- BN98 virial quantities on the
+same redshift grid, `int32 ParentID`, the branch-ID fix, `%.3f`
+filenames, SLURM driver with retries, same `hmasses` grid, same
+`lgMres = 7.0`, same `optype` switch. They differ in what halo structure
+they attach to each branch.
+
+|  | `TreeGen.py` | `TreeGen_Sub.py` |
+|---|---|---|
+| Lineage | Jiang+21 / paper 1; now the hybrid tree | Green+21 / paper 2 |
+| Halo profile | Dekel+17 | NFW |
+| Structure from | `init.Dekel_fromMAH` | `init.c2_fromMAH` |
+| Baryonic response | `HaloResponse` = `NIHAO` / `APOSTLE` | none (DMO) |
+| Concentration knob | -- | `conctype` = `zhao` / `vdb` |
+| Galaxies at infall | `StellarMass` (RP17 + 0.2 dex scatter), `StellarSize` (Jiang+19 R_eff) | none |
+| Extra guard | `alpha_range` (aDekel pole) | -- |
+| Output arrays | 14 | 8 |
+| Cost (lgM0=11, lgMres=8) | 4.3 s / 151 branches, 3.7 MB | 2.7 s / 164 branches, 2.6 MB |
+
+Roughly 1.7x the time per branch and 1.4x the file size for the Dekel
+version. (Different random trees -- both reseed internally -- so the
+ratio is approximate.)
+
+### Output schema
+
+Common to both:
+`redshift`, `CosmicTime`, `mass`, `order`, `ParentID`, `VirialRadius`,
+`concentration`, `coordinates`
+
+`TreeGen.py` only:
+`DMOconcentration`, `DekelConcentration`, `DekelSlope`, `StellarMass`,
+`StellarSize`, `HaloResponse`
+
+### GOTCHA: `concentration` does not mean the same thing in the two files
+
+- `TreeGen_Sub.py` -> `concentration` is the **DMO** c_-2 (Zhao+09).
+- `TreeGen.py` -> `concentration` is the **baryon-affected** c_-2, i.e.
+  after the `c2c2DMO` response factor has been applied. The DMO value is
+  stored separately as `DMOconcentration`.
+
+So when driving an NFW/Green evolution run from a `TreeGen.py` tree,
+read `DMOconcentration`, not `concentration`. That is the whole point of
+adding it: one tree file, identical merger history and identical infall
+orbits, can feed both the Dekel and the Green run, making that
+comparison paired rather than statistical.
+
+### Other asymmetries worth knowing
+
+- **`len(c)==0` safety block**: `TreeGen.py` has one (fixed in
+  `c5171cd`); `TreeGen_Sub.py` has **none**. A branch whose root sits
+  near `zmax` gets `Nc = 0`, the slice writes are no-ops, and
+  `concentration` stays at -99 for that branch. `SubEvo` will then build
+  `Green(ma, -99, ...)` at accretion. Rare, but unguarded.
+- **Scalar-`iz` guard**: `TreeGen.py` uses
+  `np.isscalar(iz) or np.ndim(iz)==0`; `TreeGen_Sub.py` only checks
+  `isinstance(iz, np.int64)`, so a plain int or `int32` slips through.
+- **`cfg.psi_res`**: set in `TreeGen_Sub.py`, not in `TreeGen.py`. It is
+  **inert for tree generation** -- the Parkinson+08 path only reads
+  `cfg.Mres`, `cfg.Mmin` and `cfg.qres`. It only matters if `SubEvo`
+  later runs in `withering` mode.
+- **Output directories**: `TreeGen.py` writes to
+  `OUTPUT_TREE_DEKEL_<HaloResponse>/`, `TreeGen_Sub.py` to
+  `OUTPUT_TREE/`.
+
 ## Hybrid design decisions
 
 | Aspect | Choice |
