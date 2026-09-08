@@ -126,7 +126,7 @@ comparison paired rather than statistical.
 | Host disk | MN, `k == 1` only |
 | Subhalo profile | **Runtime switch, not a merge.** Green fiducial; Dekel/NIHAO and Dekel/APOSTLE as the systematic bracket. Quote the spread. |
 | Stripping efficiency | `ev.alpha_from_c2`, fed **c_-2** (see gotcha 4) |
-| Mass resolution | Fixed `cfg.Mres` (Jiaxuan's choice). Set the evolution floor ~0.05 dex **below** the tree floor (see gotcha 6). |
+| Mass resolution | **`arbres` with `phi_res` tied to the profile model**: `green` -> 1e-5 (DASH), `dekel` -> 1e-3 (Penarrubia+10 limit). Keeps the disruption criterion mass-INdependent. `fixed` is retained for reproducing paper 1; there, set the evolution floor ~0.05 dex **below** the tree floor (gotcha 6). |
 | Loop order | z-outermost — keep `SubEvo`'s |
 | Mass conservation | keep |
 | High-order release | probabilistic — keep |
@@ -178,6 +178,64 @@ deferred `update_mass` ordering.
       `pr.rho(potential, xv[0], xv[2])`, and add a fallback for genuine
       midplane crossings (hold the previous `lt`, do not drop to
       `cfg.Rres`). Only needed once the hybrid turns the disk on.
+
+## Mass resolution: the three scales
+
+Do not conflate these.
+
+1. **Tree resolution** (`cfg.Mres` in TreeGen). Sets which subhaloes
+   EXIST. A branch is registered only when both progenitors clear it
+   (`cosmo.py:793-794`), so every branch's root mass -- its accretion
+   and therefore peak mass -- is above it. Downsampling onto the output
+   redshift grid can dip a branch ~0.01 dex below (measured min m_peak
+   9.78e6 at lgMres = 7.0); that is the origin of the 0.05 dex advice.
+   `cfg.Mmin = 0.04*cfg.Mres` is separate -- how far the MAIN progenitor
+   history is tracked so Zhao+09 has enough MAH. Dominant cost driver:
+   lgMres 8.5 -> 7.0 took one tree from 57 to 1477 branches.
+2. **Evolution floor** (this is the choice). Where a subhalo stops being
+   stripped. At the floor `ev.msub` clamps the mass and the driver stops
+   updating structure, but the object is NOT removed -- the orbit keeps
+   integrating and it stays in the output at its position.
+3. **Analysis cut**: `m_resolution = 1e8` on `mpeak` in
+   `subhalo.read_subhalos`.
+
+A fixed floor is a mass-DEPENDENT criterion once written as
+f_b = m/m_peak: at `cfg.Mres = 1e7` it allows f_b down to 1e-3 for
+m_peak = 1e10 but only 0.1 for m_peak = 1e8, i.e. one decade of
+stripping at the analysis cut itself.
+
+Measured on lgM0 = 11.0, tree lgMres = 7.0, 1477 branches
+(m_peak 9.8e6 - 1.5e10):
+
+```
+config                   f_sub    median f_b   n not-frozen
+fixed 1e7 (paper 1)     0.3442      5.48e-01           151
+fixed 10^6.95           0.3319      4.98e-01           178
+arbres phi=1e-3         0.2201      1.00e-03           459
+arbres phi=1e-5         0.2217      1.00e-05           533
+
+frac frozen at the floor, by m_peak:
+                           1e7-1e8       1e8-1e9      1e9-1e10
+fixed 1e7             0.916 (1322)   0.773 (132)    0.588 (17)
+arbres phi=1e-5       0.638 (1322)   0.659 (132)    0.588 (17)
+```
+
+Key points:
+
+- **The floor does not change satellite COUNTS.** `n(m_peak > 1e8)` was
+  152 in all four configs -- that is set by the tree resolution. What
+  changes is present-day masses and the disruption bookkeeping (38 vs 54
+  still-evolving above the cut, a 42% difference).
+- The 0.05 dex offset in `fixed` mode is a safety measure against the
+  zero-step abort, NOT a science change: `fixed 1e7` and `fixed 10^6.95`
+  give identical counts above the analysis cut.
+- Cost is not the deciding factor: `arbres 1e-5` was ~1.3x the fixed
+  floor on a small tree, and 1.35 min for the 1477-branch tree. The
+  ~340 min/tree seen previously was issue 5, not the mode.
+- It matters most for the galaxy model: `ev.g_EPW18` takes
+  m_max/m_max,acc, so freezing the halo freezes the galaxy. A fixed
+  floor truncates STELLAR stripping in a mass-dependent way, hardest for
+  the faintest satellites -- which undercuts the reason for the hybrid.
 
 ## Open decision
 
@@ -328,6 +386,12 @@ Jiaxuan's call. **Not yet decided.**
   `s.rh` of the stripped Dekel halo. Different meanings — check which
   file you are reading.
 - `SubEvo`'s `concentration` output is unchanged from the tree.
+- **In `arbres` mode, analysis must mask subhaloes at the floor.**
+  `Green.update_mass` clamps `f_b` at `cfg.phi_res` rather than zeroing
+  the mass, so terminated subhaloes sit at exactly
+  `phi_res * m_acc` and still carry a position. Mask
+  `m <= m_peak * cfg.phi_res`. `subhalo.read_subhalos_green` currently
+  masks only on `dhost <= R_res`, so this is not yet handled downstream.
 - Post-processing lives in
   `ELVES-Dwarf/script/SatGen_script/subhalo.py`
   (`read_subhalos` for `SatEvo`, `read_subhalos_green` for `SubEvo`).

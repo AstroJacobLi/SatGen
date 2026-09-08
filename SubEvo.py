@@ -55,27 +55,54 @@ alpha_type = 'conc' # 'fixed' or 'conc'
 #---dynamical friction strength
 cfg.lnL_pref = 0.75 # Fiducial, but can also use 1.0
 
+#---subhalo profile model
+#
+#   'green'  NFW x DASH transfer function (Green & van den Bosch 2019),
+#            calibrated down to f_b = 1e-5.
+#   'dekel'  Dekel+17 evolved on Penarrubia+10 tidal tracks.  NOT WIRED
+#            UP YET -- hybrid step 2.
+profile_type = 'green' # 'green' | 'dekel'
+
 #---evolution mode (where subhaloes stop being evolved)
 #
+#   'arbres'    [DEFAULT] stop at cfg.phi_res * m_acc, so every subhalo
+#               gets the same dynamic range in bound fraction and the
+#               disruption criterion is mass-INdependent.
 #   'fixed'     stop at a fixed halo mass, cfg.Mres.  Paper-1 behaviour.
-#               Note this imposes a MASS-DEPENDENT effective f_b floor:
-#               1e-3 for m_acc = 1e10 but 1e-1 for m_acc = 1e8, so
-#               artificial disruption is worst for the lowest-mass
-#               satellites.  Worth checking counts against 'arbres'.
-#   'arbres'    stop at cfg.phi_res * m_acc.  Green+21 behaviour; only
-#               defensible with the Green profile, since the
-#               Penarrubia+10 tracks behind the Dekel profile are not
-#               calibrated below f_b ~ 1e-3 (see CLAUDE.md issue 8).
+#               Imposes a MASS-DEPENDENT effective f_b floor: 1e-3 for
+#               m_acc = 1e10 but 1e-1 for m_acc = 1e8, so artificial
+#               disruption is worst for the lowest-mass satellites --
+#               exactly the faint end ELVES-Dwarf is counting.  Measured
+#               on a lgM0=11, lgMres=7 tree: the frozen fraction runs
+#               0.92 / 0.77 / 0.59 across m_peak decades with a fixed
+#               floor, versus a flat 0.64 / 0.66 / 0.59 under 'arbres'.
+#               Keep this mode for reproducing paper 1.
 #   'withering' stop at cfg.psi_res * M0.
+#
+# NOTE: the tree resolution, not this floor, sets how many subhaloes
+# exist.  n(m_peak > 1e8) was identical across all four settings; what
+# changes is present-day masses and the disruption bookkeeping.
 #
 # IMPORTANT: in 'fixed' mode keep lgMres_evo ~0.05 dex BELOW the tree's
 # lgMres.  If they are equal, a subhalo accreted at exactly the tree
 # resolution never gets a single msub call (see the lt sentinel below).
-cfg.evo_mode = 'fixed' # 'fixed' | 'arbres' | 'withering'
+cfg.evo_mode = 'arbres' # 'arbres' | 'fixed' | 'withering'
 
 lgMres_evo = 6.95      # [log10 Msun] used when evo_mode == 'fixed'
-cfg.phi_res = 10**-5.0 # used when evo_mode == 'arbres'
 cfg.psi_res = 10**-5.0 # used when evo_mode == 'withering'
+
+# phi_res is tied to how far the chosen profile model is actually
+# calibrated, rather than picked as an absolute mass.  Do not run the
+# Dekel branch down to 1e-5 just because the Green branch can: the
+# Penarrubia+10 tracks are numerically stable there but were never
+# calibrated below f_b ~ 1e-3 (CLAUDE.md issue 8).
+# Floor of 1e-5 is hard -- config.py asserts phi_res >= fbv_min, the
+# lower edge of the DASH interpolation grid.
+_PHI_RES_BY_PROFILE = {'green': 10**-5.0, 'dekel': 10**-3.0}
+if profile_type not in _PHI_RES_BY_PROFILE:
+    raise ValueError('bad profile_type: %s (expected %s)'
+                     % (profile_type, list(_PHI_RES_BY_PROFILE)))
+cfg.phi_res = _PHI_RES_BY_PROFILE[profile_type] # used when 'arbres'
 
 # ev.msub takes the 'fixed' path iff cfg.Mres is not None, so the floor
 # used inside msub and the disruption test below must be set together.
@@ -86,6 +113,11 @@ if cfg.evo_mode == 'fixed':
     cfg.Mres = 10**lgMres_evo
 else:
     cfg.Mres = None
+
+if profile_type != 'green':
+    raise NotImplementedError(
+        "profile_type='%s' is not wired into the evolution loop yet "
+        "(hybrid step 2); only 'green' runs today." % profile_type)
 
 ########################### evolve satellites ###########################
 
@@ -175,11 +207,12 @@ files.sort()
 files, available_masses = select_files_by_host_mass(files)
 host_mass_selected = np.unique([extract_host_mass(file) for file in files])
 print("Host masses selected:", host_mass_selected)
+print('>>> profile_type=%s' % profile_type, flush=True)
 if cfg.evo_mode == 'fixed':
     print('>>> evo_mode=fixed, cfg.Mres = 10^%.2f' % lgMres_evo, flush=True)
 else:
-    print('>>> evo_mode=%s, cfg.Mres = None (msub floors on the ratio)'
-          % cfg.evo_mode, flush=True)
+    print('>>> evo_mode=%s, cfg.Mres = None, cfg.phi_res = %.1e'
+          % (cfg.evo_mode, cfg.phi_res), flush=True)
 
 print('>>> Available host-mass bins: %s'
       % ', '.join('%.3f' % mass for mass in available_masses), flush=True)
