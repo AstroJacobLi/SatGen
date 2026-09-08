@@ -163,7 +163,7 @@ deferred `update_mass` ordering.
       `.c2()` on NFW/Green/Dekel; `g_EPW18` ported off `scipy.interp2d`
       (exact to 2.1e-14, clamping like `g_P10`); `lt_*_RHS` local-density
       fix; `ltidal(lt_prev=...)`.
-- [x] **`SubEvo.py` steps 2/3/4** (commit `c57f480`) — `profile_type`
+- [x] **`SubEvo.py` steps 2/3/4** (commit `344e754`) — `profile_type`
       switch with the Dekel branch, in-loop galaxies via `ev.g_EPW18`,
       optional MN host disk. Plus the `ltidal` sign fix (issue 11).
 - [ ] Decide `alpha_range` in `TreeGen.py` (still `None`)
