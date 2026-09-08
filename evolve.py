@@ -11,7 +11,7 @@ import cosmo as co
 import profiles as pr
 
 import numpy as np
-from scipy.interpolate import interp1d,interp2d
+from scipy.interpolate import interp1d,RegularGridInterpolator
 from scipy.optimize import brentq
 
 #########################################################################
@@ -91,18 +91,29 @@ mu_mstar_mesh_EPW18 = np.array([[1.39,1.87,2.35,2.83],
     [1.68,1.8,1.93,2.05]])
 eta_mstar_mesh_EPW18 = np.array([[1.39,1.87,2.35,2.83],
     [1.68,1.8,1.93,2.05]])
-lgxs_leff_interp_EPW18 = interp2d(alpha_grid_EPW18,lefflmax_grid_EPW18,
-    lgxs_leff_mesh_EPW18,kind='linear')
-mu_leff_interp_EPW18 = interp2d(alpha_grid_EPW18,lefflmax_grid_EPW18,
-    mu_leff_mesh_EPW18,kind='linear')
-eta_leff_interp_EPW18 = interp2d(alpha_grid_EPW18,lefflmax_grid_EPW18,
-    eta_leff_mesh_EPW18,kind='linear')
-lgxs_mstar_interp_EPW18 = interp2d(alpha_grid_EPW18,lefflmax_grid_EPW18,
-    lgxs_mstar_mesh_EPW18,kind='linear')
-mu_mstar_interp_EPW18 = interp2d(alpha_grid_EPW18,lefflmax_grid_EPW18,
-    mu_mstar_mesh_EPW18,kind='linear')
-eta_mstar_interp_EPW18 = interp2d(alpha_grid_EPW18,lefflmax_grid_EPW18,
-    eta_mstar_mesh_EPW18,kind='linear')
+# NOTE: these were scipy.interpolate.interp2d, which was removed in
+# scipy 1.14.  RegularGridInterpolator with method='linear' and
+# fill_value=None reproduces interp2d's bilinear interpolation exactly
+# in-domain (max difference 8.9e-16 against scipy 1.11).  Out-of-domain
+# behaviour is handled by clamping inside g_EPW18 -- see the note there.
+# Two bookkeeping details:
+#   - alpha_grid_EPW18 is DECREASING; RegularGridInterpolator needs
+#     ascending axes, hence the [::-1].
+#   - the meshes are indexed (lefflmax, alpha); RGI wants (alpha,
+#     lefflmax), hence the transpose.
+_alpha_asc_EPW18 = alpha_grid_EPW18[::-1]
+
+def _rgi_EPW18(mesh):
+    return RegularGridInterpolator(
+        (_alpha_asc_EPW18, lefflmax_grid_EPW18), mesh[:, ::-1].T,
+        method='linear', bounds_error=False, fill_value=None)
+
+lgxs_leff_interp_EPW18 = _rgi_EPW18(lgxs_leff_mesh_EPW18)
+mu_leff_interp_EPW18 = _rgi_EPW18(mu_leff_mesh_EPW18)
+eta_leff_interp_EPW18 = _rgi_EPW18(eta_leff_mesh_EPW18)
+lgxs_mstar_interp_EPW18 = _rgi_EPW18(lgxs_mstar_mesh_EPW18)
+mu_mstar_interp_EPW18 = _rgi_EPW18(mu_mstar_mesh_EPW18)
+eta_mstar_interp_EPW18 = _rgi_EPW18(eta_mstar_mesh_EPW18)
 def g_EPW18(x,alpha=1.,lefflmax=0.1):
     """
     Errani, Penerrubia, & Walker (2018) tidal tracks, i.e., the evolution
@@ -127,12 +138,26 @@ def g_EPW18(x,alpha=1.,lefflmax=0.1):
     
         l_eff(t)/l_eff(0), m_star(t)/m_star(0)
     """
-    xs_leff = 10.**lgxs_leff_interp_EPW18(alpha,lefflmax)
-    mu_leff = mu_leff_interp_EPW18(alpha,lefflmax)
-    eta_leff = eta_leff_interp_EPW18(alpha,lefflmax)
-    xs_mstar = 10.**lgxs_mstar_interp_EPW18(alpha,lefflmax)
-    mu_mstar = mu_mstar_interp_EPW18(alpha,lefflmax)
-    eta_mstar = eta_mstar_interp_EPW18(alpha,lefflmax)
+    # Clamp to the calibrated grid.  scipy's interp2d (used here before
+    # it was removed in scipy 1.14) evaluated FITPACK splines, which
+    # clamp to the boundary knots rather than extrapolate -- verified
+    # against scipy 1.11: out-of-domain interp2d values equal the
+    # clamped-input values exactly.  RegularGridInterpolator with
+    # fill_value=None would extrapolate instead (e.g. mu_leff at
+    # alpha=2.5 would give 1.25 rather than 0.75), so clamp explicitly.
+    # This also matches what g_P10 above already does with its own grid.
+    # It matters in practice: the Dekel slope proxy s.sh reaches ~1.8,
+    # past alpha_grid_EPW18.max() = 1.5.
+    alpha = min(max(alpha, alpha_grid_EPW18.min()), alpha_grid_EPW18.max())
+    lefflmax = min(max(lefflmax, lefflmax_grid_EPW18.min()),
+                   lefflmax_grid_EPW18.max())
+    pt = (alpha,lefflmax)
+    xs_leff = 10.**lgxs_leff_interp_EPW18(pt)
+    mu_leff = mu_leff_interp_EPW18(pt)
+    eta_leff = eta_leff_interp_EPW18(pt)
+    xs_mstar = 10.**lgxs_mstar_interp_EPW18(pt)
+    mu_mstar = mu_mstar_interp_EPW18(pt)
+    eta_mstar = eta_mstar_interp_EPW18(pt)
     y_leff = (1.+xs_leff)/(x+xs_leff)
     y_mstar = (1.+xs_mstar)/(x+xs_mstar)
     return y_leff**mu_leff *x**eta_leff, y_mstar**mu_mstar *x**eta_mstar
@@ -256,7 +281,12 @@ def alpha_from_c2(c2p, c2s):
     return 0.55 * ((c2s/c2p) / 2.)**(-1./3.)
 
 
-def msub(sp,potential,xv,dt,choice='King62',alpha=1.):
+# Counter for ltidal() falling back because no tidal radius could be
+# bracketed.  Module-level so a driver can report it per tree; each
+# multiprocessing worker keeps its own copy.
+n_lt_fallback = 0
+
+def msub(sp,potential,xv,dt,choice='King62',alpha=1.,lt_prev=None):
     """
     Evolve subhalo mass due to tidal stripping, by an amount of
     
@@ -293,7 +323,7 @@ def msub(sp,potential,xv,dt,choice='King62',alpha=1.):
         evolved mass, m [M_sun] (float)
         tidal radius, l_t [kpc] (float)
     """
-    lt = ltidal(sp,potential,xv,choice)
+    lt = ltidal(sp,potential,xv,choice,lt_prev=lt_prev)
     if lt<sp.rh: 
         dm = alpha * (sp.Mh-sp.M(lt)) * dt/pr.tdyn(potential,xv[0],xv[2])
         dm = max(dm,0.) # avoid negative dm
@@ -306,7 +336,7 @@ def msub(sp,potential,xv,dt,choice='King62',alpha=1.):
     else:
         m = sp.Mh
     return m,lt
-def ltidal(sp,potential,xv,choice='King62'):
+def ltidal(sp,potential,xv,choice='King62',lt_prev=None):
     """
     Tidal radius [kpc] of a satellite, given satellite profile, host
     potential, and phase-space coordinate within the host. 
@@ -341,8 +371,27 @@ def ltidal(sp,potential,xv,choice='King62'):
 
     fa = Findlt(a,sp,rhs)
     fb = Findlt(b,sp,rhs)
-    if fa*fb>0.:
-        lt = cfg.Rres
+    if (not np.isfinite(fa)) or (not np.isfinite(fb)) or (fa*fb>0.):
+        # No root can be bracketed in [cfg.Rres, 9.999 r_h].  Two ways
+        # to get here:
+        #   (a) rhs <= 0, i.e. the local host density exceeds the mean
+        #       interior density so King62 has no solution.  Physically
+        #       this is a disk-plane crossing; King62 assumes a smooth
+        #       spherical background and simply does not apply.
+        #   (b) rhs is NaN, which happens when the host profile itself is
+        #       degenerate (see the Dekel alpha<0 pole in CLAUDE.md).
+        #       Upstream this reached brentq, which raises on scipy>=1.11
+        #       and returned a garbage root on older scipy.
+        # Falling through to cfg.Rres would strip essentially the whole
+        # subhalo in one step, so hold the previous tidal radius when the
+        # caller can supply one.
+        global n_lt_fallback
+        n_lt_fallback += 1
+        if (lt_prev is not None) and np.isfinite(lt_prev) \
+                and (lt_prev > cfg.Rres):
+            lt = min(lt_prev, b)
+        else:
+            lt = cfg.Rres
     else:
         lt = brentq(Findlt, a,b, args=(sp,rhs),
             rtol=1e-5,maxiter=1000)
@@ -367,7 +416,13 @@ def lt_Tormen98_RHS(potential,xv):
     """
     r = np.sqrt(xv[0]**2.+xv[2]**2.)
     M = pr.M(potential,r)
-    rho = pr.rho(potential,r)
+    # Local density AT THE SATELLITE, not on the midplane.  pr.rho's z
+    # defaults to 0, and for a spherical host rho(r,0) == rho(r) so the
+    # old call was correct -- but for a flattened component (an MN disk)
+    # it evaluated the maximum midplane density regardless of the
+    # satellite's height.  That inflated dlnM/dlnr past 2, flipped this
+    # RHS negative, and made ltidal silently fall back to cfg.Rres.
+    rho = pr.rho(potential,xv[0],xv[2])
     dlnMdlnr = cfg.FourPi * r**3 * rho / M
     return (M / r**3) * (2. - dlnMdlnr)
 def lt_King62_RHS(potential,xv):
@@ -391,7 +446,13 @@ def lt_King62_RHS(potential,xv):
     r = np.sqrt(xv[0]**2.+xv[2]**2.)
     Om = Omega(xv)
     M = pr.M(potential,r)
-    rho = pr.rho(potential,r)
+    # Local density AT THE SATELLITE, not on the midplane.  pr.rho's z
+    # defaults to 0, and for a spherical host rho(r,0) == rho(r) so the
+    # old call was correct -- but for a flattened component (an MN disk)
+    # it evaluated the maximum midplane density regardless of the
+    # satellite's height.  That inflated dlnM/dlnr past 2, flipped this
+    # RHS negative, and made ltidal silently fall back to cfg.Rres.
+    rho = pr.rho(potential,xv[0],xv[2])
     dlnMdlnr = cfg.FourPi * r**3 * rho / M
     return (M / r**3) * (2.+Om**2.*r**3/cfg.G/M - dlnMdlnr)
 def Findlt(l,sp,rhs):

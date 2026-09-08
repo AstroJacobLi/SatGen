@@ -166,6 +166,14 @@ class NFW(object):
         self.Phi0 = -cfg.FourPiG*self.rho0*self.rs**2.      
         self.Vmax = self.Vcirc(self.rmax)
         self.s001 = self.s(0.01*self.rh)
+    def c2(self):
+        """
+        Concentration in the c_-2 = r_h / r_{-2} convention.  For NFW the
+        native .ch already IS c_-2; this accessor exists so that callers
+        such as evolve.alpha_from_c2 can ask any profile class for c_-2
+        without knowing which convention its .ch uses.
+        """
+        return self.ch
     def f(self,x):
         """
         Auxiliary method for NFW profile: f(x) = ln(1+x) - x/(1+x)
@@ -1326,6 +1334,22 @@ class Dekel(object):
         self.Vmax = self.Vcirc(self.rmax)
         self.sh = (self.alphah+0.35*self.ch**0.5) / (1.+0.1*self.ch**0.5)
         self.s001 = self.s(0.01*self.rh)
+        self.Minit = M # so that evolve.msub's arbitrary-resolution
+        # branch (which floors on cfg.phi_res*sp.Minit) works for Dekel
+        # as it does for Green.  A Dekel object is re-instantiated at
+        # every step rather than updated in place, so callers that need
+        # the true accretion mass must pass it explicitly.
+    def c2(self):
+        """
+        Concentration in the c_-2 = r_h / r_{-2} convention.
+
+        NOTE: Dekel's native .ch is the DEKEL concentration, which is NOT
+        c_-2.  From init.cDekel, c_Dekel = (2-alpha)^2/2.25 * c_-2, so
+        c_-2 = 2.25 * c_Dekel / (2-alpha)^2.  The ratio spans 0.56 to
+        2.25 over alpha in [0,1], so feeding .ch to a routine that wants
+        c_-2 (e.g. evolve.alpha_from_c2) is wrong by up to a factor 2.25.
+        """
+        return 2.25 * self.ch / (2.-self.alphah)**2.
     def X(self,x):
         """
         Auxiliary function for Dekel+ profile
@@ -2700,6 +2724,13 @@ class Green(object):
         # attributes repeatedly used by following methods
         self.rho0 = self.rhoc*self.Deltah/3.*self.ch**3./self.f(self.ch)
         self.Phi0 = -cfg.FourPiG*self.rho0*self.rs**2.
+    def c2(self):
+        """
+        Concentration in the c_-2 = r_h / r_{-2} convention.  For Green
+        this is the INITIAL NFW concentration, which is what the DASH
+        calibration (and evolve.alpha_from_c2) expects.
+        """
+        return self.ch
 
     def transfer(self, x):
         """
