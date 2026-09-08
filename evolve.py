@@ -281,10 +281,12 @@ def alpha_from_c2(c2p, c2s):
     return 0.55 * ((c2s/c2p) / 2.)**(-1./3.)
 
 
-# Counter for ltidal() falling back because no tidal radius could be
-# bracketed.  Module-level so a driver can report it per tree; each
-# multiprocessing worker keeps its own copy.
-n_lt_fallback = 0
+# Counters for ltidal() being unable to bracket a tidal radius.
+# Module-level so a driver can report them per tree; each multiprocessing
+# worker keeps its own copy.
+n_lt_nostrip = 0   # tidal radius beyond the subhalo -> no stripping
+n_lt_fullstrip = 0 # tidal radius inside cfg.Rres   -> fully unbound
+n_lt_nan = 0       # rhs not finite -> degenerate host profile
 
 def msub(sp,potential,xv,dt,choice='King62',alpha=1.,lt_prev=None):
     """
@@ -371,26 +373,35 @@ def ltidal(sp,potential,xv,choice='King62',lt_prev=None):
 
     fa = Findlt(a,sp,rhs)
     fb = Findlt(b,sp,rhs)
-    if (not np.isfinite(fa)) or (not np.isfinite(fb)) or (fa*fb>0.):
-        # No root can be bracketed in [cfg.Rres, 9.999 r_h].  Two ways
-        # to get here:
-        #   (a) rhs <= 0, i.e. the local host density exceeds the mean
-        #       interior density so King62 has no solution.  Physically
-        #       this is a disk-plane crossing; King62 assumes a smooth
-        #       spherical background and simply does not apply.
-        #   (b) rhs is NaN, which happens when the host profile itself is
-        #       degenerate (see the Dekel alpha<0 pole in CLAUDE.md).
-        #       Upstream this reached brentq, which raises on scipy>=1.11
-        #       and returned a garbage root on older scipy.
-        # Falling through to cfg.Rres would strip essentially the whole
-        # subhalo in one step, so hold the previous tidal radius when the
-        # caller can supply one.
-        global n_lt_fallback
-        n_lt_fallback += 1
-        if (lt_prev is not None) and np.isfinite(lt_prev) \
-                and (lt_prev > cfg.Rres):
-            lt = min(lt_prev, b)
+    global n_lt_nostrip, n_lt_fullstrip, n_lt_nan
+    if (not np.isfinite(fa)) or (not np.isfinite(fb)):
+        # rhs is not finite, i.e. the HOST profile is degenerate -- e.g.
+        # the Dekel alpha<0 pole, which makes rho() return NaN.  Upstream
+        # this reached brentq, which raises on scipy>=1.11 and returned a
+        # garbage root on older scipy (probably the real reason the old
+        # pipeline pinned scipy==1.10.1).  Hold the previous tidal radius.
+        n_lt_nan += 1
+        lt = lt_prev if ((lt_prev is not None) and np.isfinite(lt_prev)
+                         and (lt_prev > cfg.Rres)) else cfg.Rres
+    elif fa*fb>0.:
+        # No root in [cfg.Rres, 9.999 r_h].  Findlt = m(l)/l^3 - rhs is
+        # monotonically decreasing in l, so the common sign says which
+        # side of the bracket the tidal radius falls on -- and the two
+        # cases mean OPPOSITE things.  Upstream returned cfg.Rres for
+        # both, which is backwards for the common one.
+        if fb > 0.:
+            # Still above the host RHS at 9.999 r_h: the tidal radius
+            # lies outside the subhalo, so there is NO stripping this
+            # step.  Returning cfg.Rres here would instead unbind
+            # everything outside 1 pc.  On a test tree this was 816 of
+            # 836 no-bracket cases.
+            n_lt_nostrip += 1
+            lt = b
         else:
+            # Below the host RHS even at cfg.Rres: the tidal radius is
+            # inside the resolution limit, so the subhalo is entirely
+            # unbound.  This is the genuine disk-plane-crossing case.
+            n_lt_fullstrip += 1
             lt = cfg.Rres
     else:
         lt = brentq(Findlt, a,b, args=(sp,rhs),

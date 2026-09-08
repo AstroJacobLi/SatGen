@@ -159,13 +159,17 @@ deferred `update_mass` ordering.
       below the floor. Default `fixed`, `lgMres_evo = 6.95`.
       Verified: 42/56 subhaloes terminate at the floor (previously
       none); no NaN/Inf; the floor==tree-resolution case completes.
-- [ ] `SubEvo.py` step 2: `profile_type` switch, Dekel branch
-      (needs `Dekel.Minit` and a `.c2()` accessor — issues 3 and 4)
-- [ ] `SubEvo.py` step 3: in-loop galaxies (`ev.g_EPW18`) with
-      per-branch state arrays; port off `scipy.interp2d`
-- [ ] `SubEvo.py` step 4: MN host disk (needs issue 2 fixed first)
+- [x] **Library prerequisites** (commit `e8e6cbd`) — `Dekel.Minit`;
+      `.c2()` on NFW/Green/Dekel; `g_EPW18` ported off `scipy.interp2d`
+      (exact to 2.1e-14, clamping like `g_P10`); `lt_*_RHS` local-density
+      fix; `ltidal(lt_prev=...)`.
+- [x] **`SubEvo.py` steps 2/3/4** (commit `c57f480`) — `profile_type`
+      switch with the Dekel branch, in-loop galaxies via `ev.g_EPW18`,
+      optional MN host disk. Plus the `ltidal` sign fix (issue 11).
+- [ ] Decide `alpha_range` in `TreeGen.py` (still `None`)
 - [ ] Validation: run `profile_type='green'`, `fd=0` at fixed seed and
       check it reproduces the existing `SubEvo` output tree-for-tree
+- [ ] Decide whether paper-2 Green runs need redoing for issue 11
 - [ ] `TreeGen_Sub.py` left as the DMO path (unchanged)
 
 ### Deferred (agreed to handle later)
@@ -300,7 +304,8 @@ Jiaxuan's call. **Not yet decided.**
    Affects every paper-1 run. Mitigated by `alpha_range`; given the 96%
    figure, **recommend turning it on**.
 
-2. **`ev.lt_King62_RHS` evaluates the host density in the midplane.**
+2. **[FIXED in `e8e6cbd`]** `ev.lt_King62_RHS` evaluated the host
+   density in the midplane.
    It calls `pr.rho(potential, r)`, and `pr.rho(potential, R, z=0.)`
    defaults z to 0. Correct for spherical components; badly wrong for an
    MN disk, which gets evaluated at maximum midplane density regardless
@@ -377,6 +382,32 @@ Jiaxuan's call. **Not yet decided.**
     saturation — deep branches are discovered last and rarely become
     parents. int32 is correct insurance, not a repair.
 
+11. **[FIXED in `e8e6cbd`]** `ltidal`'s no-bracket fallback had the
+    WRONG SIGN, and this one bites the Green runs too.
+
+    `Findlt(l) = m(l)/l^3 - rhs` decreases monotonically in `l`, so when
+    no root exists in `[cfg.Rres, 9.999 r_h]` the common sign says which
+    side it falls on -- and the two cases mean OPPOSITE things:
+
+    - `fa>0, fb>0`: the subhalo's mean density still exceeds the host RHS
+      at 9.999 r_h, so the tidal radius lies OUTSIDE the subhalo and
+      there should be NO stripping.
+    - `fa<0, fb<0`: below the RHS even at `cfg.Rres`, so the subhalo is
+      entirely unbound.
+
+    Upstream returned `cfg.Rres` for both, i.e. it stripped everything
+    outside 1 pc in the case that should have had no stripping at all.
+    Measured breakdown on a 167-branch Dekel tree: **816 of 836
+    no-bracket cases were the no-strip kind**, 20 were full-strip, 0 NaN.
+
+    Not Dekel-specific. A production-resolution GREEN run (lgM0=11,
+    lgMres=7, 1477 branches) hits it 464 times per tree, so the existing
+    paper-2 `SubEvo` outputs contain it. Aggregate effect on that tree
+    was modest, f_sub 0.2217 -> 0.2147, but individual satellites can be
+    affected much more strongly. `evolve.n_lt_nostrip`,
+    `n_lt_fullstrip` and `n_lt_nan` count the three cases and `SubEvo`
+    reports them per tree.
+
 ## Conventions
 
 - Tree filenames **must** use `%.3f` for the host mass:
@@ -386,6 +417,13 @@ Jiaxuan's call. **Not yet decided.**
   `s.rh` of the stripped Dekel halo. Different meanings — check which
   file you are reading.
 - `SubEvo`'s `concentration` output is unchanged from the tree.
+- **Output schema depends on `profile_type`.** Both write
+  `profile_type` into the npz. `dekel` adds `DekelConcentration`,
+  `DekelSlope`, `DekelOverdensity` and `MaxCircularVelocity` (and
+  `StellarMass`/`StellarSize` when `evolve_galaxies`); `GreenRte` stays
+  -99 throughout. `green` fills `GreenRte` but leaves
+  `MaxCircularVelocity` at -99, because `Green.rmax` is the
+  pre-stripping NFW value so a post-stripping V_max would need a search.
 - **In `arbres` mode, analysis must mask subhaloes at the floor.**
   `Green.update_mass` clamps `f_b` at `cfg.phi_res` rather than zeroing
   the mass, so terminated subhaloes sit at exactly

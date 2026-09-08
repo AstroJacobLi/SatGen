@@ -22,8 +22,10 @@
 import config as cfg
 import cosmo as co
 import evolve as ev
-from profiles import NFW,Green
+from profiles import NFW,Green,Dekel,MN
 from orbit import orbit
+import profiles as pr
+import galhalo as gh
 import aux
 
 import numpy as np
@@ -51,6 +53,21 @@ min_Rres = 0.01 # [kpc] <<< use 0.001 if want to resolve UCDs
 
 #---stripping efficiency type
 alpha_type = 'conc' # 'fixed' or 'conc'
+
+#---host disk (only applied to direct satellites of the main halo)
+# Needs profile_type='dekel' trees, which carry VirialRadius and the
+# concentration needed for the Jiang+19 R_eff.  fd = 0 disables it.
+# NOTE the King62 tidal-radius criterion assumes a smooth spherical
+# background, so a disk-plane crossing has no solution; evolve.ltidal
+# now holds the previous tidal radius there instead of collapsing to
+# cfg.Rres (evolve.n_lt_fallback counts how often).
+fd = 0.0          # disk mass fraction, M_disk = fd * M_host
+flattening = 25.0 # disk scale radius / scale height
+
+#---galaxies evolved in-loop via the Errani+18 tidal tracks
+# Requires profile_type='dekel' and a tree carrying StellarMass /
+# StellarSize (i.e. TreeGen.py, not TreeGen_Sub.py).
+evolve_galaxies = False
 
 #---dynamical friction strength
 cfg.lnL_pref = 0.75 # Fiducial, but can also use 1.0
@@ -114,10 +131,14 @@ if cfg.evo_mode == 'fixed':
 else:
     cfg.Mres = None
 
-if profile_type != 'green':
-    raise NotImplementedError(
-        "profile_type='%s' is not wired into the evolution loop yet "
-        "(hybrid step 2); only 'green' runs today." % profile_type)
+if evolve_galaxies and profile_type != 'dekel':
+    raise ValueError("evolve_galaxies needs profile_type='dekel': the "
+                     "Errani+18 tracks evolve the galaxy alongside a "
+                     "Dekel profile, whereas the Green transfer function "
+                     "already does its own structural evolution.")
+if fd > 0. and profile_type != 'dekel':
+    raise ValueError("fd>0 needs profile_type='dekel' trees (the disk "
+                     "scale length comes from the host's R_eff).")
 
 ########################### evolve satellites ###########################
 
@@ -207,7 +228,8 @@ files.sort()
 files, available_masses = select_files_by_host_mass(files)
 host_mass_selected = np.unique([extract_host_mass(file) for file in files])
 print("Host masses selected:", host_mass_selected)
-print('>>> profile_type=%s' % profile_type, flush=True)
+print('>>> profile_type=%s, fd=%.2f, evolve_galaxies=%s'
+      % (profile_type, fd, evolve_galaxies), flush=True)
 if cfg.evo_mode == 'fixed':
     print('>>> evo_mode=fixed, cfg.Mres = 10^%.2f' % lgMres_evo, flush=True)
 else:
@@ -241,10 +263,22 @@ def loop(file):
         #continue
 
     time_start_tmp = time.time()
+    ev.n_lt_nostrip = 0; ev.n_lt_fullstrip = 0; ev.n_lt_nan = 0
     print('    %s: starting' % label, flush=True)
     
     #---load trees
     f = np.load(file)
+    if profile_type == 'dekel':
+        need = ['DekelConcentration','DekelSlope']
+        if evolve_galaxies:
+            need += ['StellarMass','StellarSize']
+        missing = [k for k in need if k not in f]
+        if missing:
+            raise KeyError(
+                "%s lacks %s -- profile_type='dekel'%s needs a TreeGen.py "
+                "tree, not TreeGen_Sub.py"
+                % (label, ', '.join(missing),
+                   ' with evolve_galaxies' if evolve_galaxies else ''))
     redshift = f['redshift']
     CosmicTime = f['CosmicTime']
     mass = f['mass']
@@ -257,6 +291,16 @@ def loop(file):
     # compute the virial overdensities for all redshifts
     VirialOverdensity = co.DeltaBN(redshift, cfg.Om, cfg.OL) # same as Dvsample
     GreenRte = np.zeros(VirialRadius.shape) - 99. # contains r_{te} values
+    MaxCircularVelocity = np.zeros(VirialRadius.shape,np.float32) - 99.
+    if profile_type == 'dekel':
+        # the Dekel profile is re-derived every step, so its parameters
+        # have to be stored to be able to reconstruct it during analysis
+        DekelConcentration = f['DekelConcentration'].copy()
+        DekelSlope = f['DekelSlope'].copy()
+        DekelOverdensity = np.zeros(VirialRadius.shape,np.float32) - 99.
+        if evolve_galaxies:
+            StellarMass = f['StellarMass'].copy()
+            StellarSize = f['StellarSize'].copy()
     alphas = np.zeros(VirialRadius.shape) - 99.
     tdyns  = np.zeros(VirialRadius.shape) - 99.
 
@@ -276,6 +320,7 @@ def loop(file):
     #   additional, mass of ejected subhaloes stored in ejected_mass
     #   to be removed from corresponding host at next timestep
     potentials = [0] * mass.shape[0]
+    disk_cache = {'iz': None, 'obj': None} # one MN per timestep; see below
     orbits = [0] * mass.shape[0]
     trelease = np.zeros(mass.shape[0])
     ejected_mass = np.zeros(mass.shape[0])
@@ -283,6 +328,22 @@ def loop(file):
     #---list of minimum masses, below which we stop evolving the halo
     M0 = mass[0,0]
     min_mass = np.zeros(mass.shape[0])
+
+    #---per-branch quantities frozen at accretion.  SatEvo kept these as
+    #   locals because its outer loop was over branches; with redshift
+    #   outermost they have to be arrays.
+    c2_acc = np.zeros(mass.shape[0])    # c_-2 at accretion, for alpha_from_c2
+    if profile_type == 'dekel':
+        m_acc = np.zeros(mass.shape[0])
+        alpha_acc = np.zeros(mass.shape[0])   # Dekel innermost slope, held fixed
+        slope_acc = np.zeros(mass.shape[0])   # s.sh, the tidal-track slope proxy
+        lmax_acc = np.zeros(mass.shape[0])
+        vmax_acc = np.zeros(mass.shape[0])
+        mmax_acc = np.zeros(mass.shape[0])    # M(<r_max) at accretion
+        if evolve_galaxies:
+            ms_acc = np.zeros(mass.shape[0])
+            le_acc = np.zeros(mass.shape[0])
+            lelmax_acc = np.zeros(mass.shape[0])
 
     total_steps = izmax
 
@@ -329,7 +390,28 @@ def loop(file):
                             # eventually be fixed
                             continue
 
-                        potentials[id] = Green(ma,c2a,Delta=Dva,z=za)
+                        if profile_type == 'green':
+                            potentials[id] = Green(ma,c2a,Delta=Dva,z=za)
+                            c2_acc[id] = potentials[id].c2()
+                        else:
+                            s0 = Dekel(ma,DekelConcentration[id,iz],
+                                       DekelSlope[id,iz],Delta=Dva,z=za)
+                            potentials[id] = s0
+                            c2_acc[id] = s0.c2()
+                            m_acc[id] = ma
+                            alpha_acc[id] = s0.alphah
+                            slope_acc[id] = s0.sh
+                            lmax_acc[id] = s0.rmax
+                            vmax_acc[id] = s0.Vcirc(s0.rmax)
+                            # M(<r) = r Vc(r)^2 / G, exactly
+                            mmax_acc[id] = (lmax_acc[id]*vmax_acc[id]**2
+                                            / cfg.G)
+                            DekelOverdensity[id,iz] = Dva
+                            MaxCircularVelocity[id,iz] = vmax_acc[id]
+                            if evolve_galaxies:
+                                ms_acc[id] = StellarMass[id,iz]
+                                le_acc[id] = StellarSize[id,iz]
+                                lelmax_acc[id] = le_acc[id]/lmax_acc[id]
                         orbits[id] = orbit(xva)
                         trelease[id] = ta
 
@@ -348,8 +430,27 @@ def loop(file):
                     # the p,s,o objects are updated in-place in their arrays
                     # unless the orbit is replaced with a new object when released
                     ip = ParentID[id,iz]
-                    p = potentials[ip]
+                    p_halo = potentials[ip]
                     s = potentials[id]
+
+                    # Composite host potential for direct satellites of
+                    # the main halo.  Everything downstream (ev.msub,
+                    # ev.ltidal, orbit.integrate, pr.tdyn) accepts a list.
+                    if (fd > 0.) and (ip == 0):
+                        # The disk depends only on the main halo, so it is
+                        # identical for every level-1 satellite at this
+                        # timestep.  MN.M lazily builds an interpolator for
+                        # the spherically enclosed mass, which is far too
+                        # expensive to redo per satellite -- cache per iz.
+                        if disk_cache['iz'] != iz:
+                            Rep = gh.Reff(VirialRadius[0,iz], p_halo.c2())
+                            adp = 0.766421/(1.+1./flattening)*Rep
+                            disk_cache['iz'] = iz
+                            disk_cache['obj'] = MN(fd*mass[0,iz], adp,
+                                                   adp/flattening)
+                        p = [p_halo, disk_cache['obj']]
+                    else:
+                        p = p_halo
 
                     # lt and rte are function locals that persist across
                     # the whole loop(file) call.  In SatEvo's
@@ -372,8 +473,26 @@ def loop(file):
                             ejected_mass[id] = 0
                             mass[id,iz] = max(mass[id,iz], min_mass[id])
 
-                        s.update_mass(mass[id,iz])
-                        rte = s.rte()
+                        if profile_type == 'green':
+                            s.update_mass(mass[id,iz])
+                            rte = s.rte()
+                        else:
+                            # No in-place update for Dekel: re-derive the
+                            # profile from the Penarrubia+10 tidal track.
+                            # Done here, not right after msub, so that
+                            # higher-order subhaloes still see their host
+                            # un-stripped this step (the same deferral the
+                            # Green branch relies on).
+                            mnew = max(mass[id,iz], min_mass[id])
+                            cnew,Dnew = ev.Dekel2(mnew,m_acc[id],
+                                lmax_acc[id],vmax_acc[id],alpha_acc[id],
+                                slope_acc[id],z=z)
+                            s = Dekel(mnew,cnew,alpha_acc[id],
+                                      Delta=Dnew,z=z)
+                            potentials[id] = s
+                            DekelConcentration[id,iz] = cnew
+                            DekelSlope[id,iz] = alpha_acc[id]
+                            DekelOverdensity[id,iz] = Dnew
 
                     o = orbits[id]
                     xv = orbits[id].xv
@@ -392,20 +511,54 @@ def loop(file):
                     if(alpha_type == 'fixed'):
                         alpha = 0.55
                     elif(alpha_type == 'conc'):
-                        alpha = ev.alpha_from_c2(p.ch, s.ch)
+                        # c_-2 for both, via the accessor -- Dekel's .ch
+                        # is NOT c_-2.  The subhalo value is the one at
+                        # accretion, as alpha_from_c2's docstring requires.
+                        alpha = ev.alpha_from_c2(p_halo.c2(), c2_acc[id])
 
                     #---evolve satellite
                     # as long as the mass is larger than resolution limit
                     if m > min_mass[id]:
 
                         # evolve subhalo properties
+                        lt_prev = (VirialRadius[id,iz]
+                                   if VirialRadius[id,iz] > 0. else None)
                         m,lt = ev.msub(s,p,xv,dt,choice='King62',
-                            alpha=alpha)
+                            alpha=alpha,lt_prev=lt_prev)
+
+                        if profile_type == 'dekel':
+                            # Evolved r_max and V_max straight off the
+                            # Penarrubia+10 track, so no second Dekel
+                            # object has to be built here.  Exact, since
+                            # M(<r_max) = r_max V_c(r_max)^2 / G.
+                            g_vmax,g_lmax = ev.g_P10(m/m_acc[id],
+                                                     slope_acc[id])
+                            vmax = vmax_acc[id]*g_vmax
+                            MaxCircularVelocity[id,iznext] = vmax
+                            if evolve_galaxies:
+                                mmax = (lmax_acc[id]*g_lmax)*vmax**2/cfg.G
+                                g_le,g_ms = ev.g_EPW18(mmax/mmax_acc[id],
+                                    slope_acc[id],lelmax_acc[id])
+                                StellarSize[id,iznext] = le_acc[id]*g_le
+                                # <<< safety: the galaxy cannot outweigh
+                                # its halo
+                                StellarMass[id,iznext] = min(
+                                    ms_acc[id]*g_ms, m)
 
                     else: # we do nothing about disrupted satellite, s.t.,
-                        # its properties right before disruption would be 
+                        # its properties right before disruption would be
                         # stored in the output arrays
-                        pass
+                        if profile_type == 'dekel':
+                            # ...which means carrying them forward, the way
+                            # mass and VirialRadius are.  SatEvo got this
+                            # for free from stale locals; with redshift
+                            # outermost it has to be explicit, or the
+                            # arrays keep -99 after termination.
+                            MaxCircularVelocity[id,iznext] = \
+                                MaxCircularVelocity[id,iz]
+                            if evolve_galaxies:
+                                StellarMass[id,iznext] = StellarMass[id,iz]
+                                StellarSize[id,iznext] = StellarSize[id,iz]
 
                     #---evolve orbit
                     if m > min_mass[id]:
@@ -416,7 +569,7 @@ def loop(file):
                         # NOTE: No use integrating orbit any longer once the halo
                         # is disrupted, this just slows it down
                     
-                        tdyn = p.tdyn(r)
+                        tdyn = pr.tdyn(p,r) # p may be a list
                         o.integrate(t,p,m_old)
                         xv = o.xv # note that the coordinates are updated 
                         # internally in the orbit instance "o" when calling
@@ -427,7 +580,7 @@ def loop(file):
                         # no need for orbit integration; to avoid potential 
                         # numerical issues, we assign a dummy coordinate that 
                         # is almost zero but not exactly zero
-                        tdyn = p.tdyn(cfg.Rres)
+                        tdyn = pr.tdyn(p,cfg.Rres)
                         xv = np.array([cfg.Rres,0.,0.,0.,0.,0.])
 
                     r = np.sqrt(xv[0]**2+xv[2]**2)
@@ -506,15 +659,26 @@ def loop(file):
                     alphas[id,iz] = alpha
                     tdyns[id,iz] = tdyn
 
-                else: # before accretion, halo is an NFW profile
-                    if(concentration[id,iz] > 0): 
+                else: # before accretion
+                    if(concentration[id,iz] > 0):
                         # the halo has gone above tree mass resolution
                         # different than SatEvo mass resolution by small delta
-                        potentials[id] = NFW(mass[id,iz],concentration[id,iz],
-                                             Delta=VirialOverdensity[iz],z=redshift[iz])
+                        if profile_type == 'green':
+                            potentials[id] = NFW(mass[id,iz],concentration[id,iz],
+                                                 Delta=VirialOverdensity[iz],z=redshift[iz])
+                        elif DekelConcentration[id,iz] > 0:
+                            # Must be Dekel too: this is where the MAIN
+                            # halo's potential is rebuilt every step, and
+                            # it is what sets the tidal field for every
+                            # level-1 satellite.  Using NFW here would
+                            # throw away the baryonic halo response that
+                            # is the whole point of the Dekel run.
+                            potentials[id] = Dekel(mass[id,iz],
+                                DekelConcentration[id,iz],DekelSlope[id,iz],
+                                Delta=VirialOverdensity[iz],z=redshift[iz])
 
     #---output
-    np.savez(outfile, 
+    out = dict(
         redshift = redshift,
         CosmicTime = CosmicTime,
         mass = mass,
@@ -526,8 +690,27 @@ def loop(file):
         # once the halo falls below the resolution limit
         concentration = concentration, # this is unchanged from TreeGen output
         coordinates = coordinates,
+        profile_type = profile_type,
         )
+    if profile_type == 'dekel':
+        # GreenRte stays -99 throughout in this mode; the Dekel profile
+        # is reconstructed from (mass, DekelConcentration, DekelSlope,
+        # DekelOverdensity) instead.  MaxCircularVelocity is only filled
+        # for 'dekel' -- Green's .rmax is the pre-stripping NFW value, so
+        # a post-stripping V_max would need a search.
+        out.update(DekelConcentration = DekelConcentration,
+                   DekelSlope = DekelSlope,
+                   DekelOverdensity = DekelOverdensity,
+                   MaxCircularVelocity = MaxCircularVelocity)
+        if evolve_galaxies:
+            out.update(StellarMass = StellarMass, StellarSize = StellarSize)
+    np.savez(outfile, **out)
     print('    %s: output saved' % label, flush=True)
+    if ev.n_lt_nostrip or ev.n_lt_fullstrip or ev.n_lt_nan:
+        print('    %s: ltidal no-bracket -- no-strip %d, full-strip %d, '
+              'degenerate-host %d'
+              % (label, ev.n_lt_nostrip, ev.n_lt_fullstrip, ev.n_lt_nan),
+              flush=True)
 
     #---on-screen prints
     m0 = mass[:,0][1:]
